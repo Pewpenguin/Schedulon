@@ -9,7 +9,10 @@ service TrainingScheduler {
   // Register a worker with the scheduler
   rpc RegisterWorker(RegisterWorkerRequest) returns (RegisterWorkerResponse);
   
-  // Request a task to be assigned to a worker
+  // Submit a user task to the scheduler
+  rpc SubmitTask(SubmitTaskRequest) returns (SubmitTaskResponse);
+
+  // Worker-only: request a task assignment from the scheduler
   rpc RequestTask(TaskRequest) returns (Task);
   
   // Report task status back to the scheduler
@@ -81,12 +84,27 @@ message RegisterWorkerResponse {
   string assigned_id = 3;
 }
 
-// Request for a task
+// Worker-only request for a task
 message TaskRequest {
   string worker_id = 1;
   repeated string available_gpu_ids = 2;
   Task task = 3;
   map<string, string> priority_info = 4;
+}
+
+// Request to submit a task
+message SubmitTaskRequest {
+  string image = 1;
+  repeated string command = 2;
+  int32 required_gpus = 3;
+  int32 priority = 4;
+  string idempotency_key = 5;
+}
+
+// Response to task submission
+message SubmitTaskResponse {
+  string task_id = 1;
+  string status = 2;
 }
 
 // Task status update
