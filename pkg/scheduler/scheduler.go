@@ -2,7 +2,9 @@ package scheduler
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -192,6 +194,64 @@ func (s *Scheduler) RequestTask(ctx context.Context, req *pb.TaskRequest) (*pb.T
 	}
 
 	return nil, status.Error(codes.ResourceExhausted, "No suitable tasks for this worker")
+}
+
+func (s *Scheduler) SubmitTask(ctx context.Context, req *pb.SubmitTaskRequest) (*pb.SubmitTaskResponse, error) {
+	if req == nil {
+		return nil, status.Error(codes.InvalidArgument, "submit task request is required")
+	}
+	if strings.TrimSpace(req.Image) == "" {
+		return nil, status.Error(codes.InvalidArgument, "image is required")
+	}
+	if len(req.Command) == 0 {
+		return nil, status.Error(codes.InvalidArgument, "command must contain at least one argument")
+	}
+	if req.RequiredGpus <= 0 {
+		return nil, status.Error(codes.InvalidArgument, "required_gpus must be greater than 0")
+	}
+	if req.Priority < 0 {
+		return nil, status.Error(codes.InvalidArgument, "priority must be non-negative")
+	}
+
+	taskID := fmt.Sprintf("task-%d", time.Now().UnixNano())
+
+	// Keep the original submit payload in configuration for worker execution.
+	configBytes, err := json.Marshal(map[string]interface{}{
+		"image":           req.Image,
+		"command":         req.Command,
+		"priority":        req.Priority,
+		"idempotency_key": req.IdempotencyKey,
+	})
+	if err != nil {
+		s.logger.Error("Failed to marshal submitted task configuration", map[string]interface{}{
+			"error": err.Error(),
+		})
+		return nil, status.Error(codes.Internal, "failed to serialize task configuration")
+	}
+
+	task := &Task{
+		ID:            taskID,
+		Name:          req.Image,
+		RequiredGPUs:  uint32(req.RequiredGpus),
+		MinGPUMemory:  0,
+		Configuration: configBytes,
+		Status:        pb.TaskStatus_PENDING,
+	}
+
+	s.logger.Info("Received task submission", map[string]interface{}{
+		"task_id":         taskID,
+		"image":           req.Image,
+		"required_gpus":   req.RequiredGpus,
+		"priority":        req.Priority,
+		"idempotency_key": req.IdempotencyKey,
+	})
+
+	s.AddTask(task)
+
+	return &pb.SubmitTaskResponse{
+		TaskId: task.ID,
+		Status: task.Status.String(),
+	}, nil
 }
 
 func (s *Scheduler) ReportTaskStatus(ctx context.Context, update *pb.TaskStatusUpdate) (*pb.TaskStatusResponse, error) {
