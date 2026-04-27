@@ -62,7 +62,7 @@ func (s *Scheduler) SaveState() error {
 	state := &persistence.SchedulerState{
 		Workers:      make(map[string]*persistence.WorkerState),
 		Tasks:        make(map[string]*persistence.TaskState),
-		PendingTasks: make([]string, 0, len(s.pendingTasks)),
+		PendingTasks: make([]string, 0, s.taskQueue.Len()),
 	}
 
 	for id, worker := range s.workers {
@@ -110,7 +110,7 @@ func (s *Scheduler) SaveState() error {
 		}
 	}
 
-	for _, task := range s.pendingTasks {
+	for _, task := range s.taskQueue.Snapshot() {
 		state.PendingTasks = append(state.PendingTasks, task.ID)
 	}
 
@@ -147,7 +147,7 @@ func (s *Scheduler) LoadState() error {
 
 	s.workers = make(map[string]*Worker)
 	s.tasks = make(map[string]*Task)
-	s.pendingTasks = make([]*Task, 0)
+	s.taskQueue = NewTaskQueue()
 
 	for id, taskState := range state.Tasks {
 		startTime := time.Time{}
@@ -214,6 +214,14 @@ func (s *Scheduler) LoadState() error {
 		}
 
 		if task.Status != pb.TaskStatus_PENDING {
+			if err := ValidateTransition(task.Status.String(), pb.TaskStatus_PENDING.String()); err != nil {
+				s.logger.Warn("Skipping task from pending list due to invalid state transition", map[string]interface{}{
+					"task_id": taskID,
+					"status":  task.Status.String(),
+					"error":   err.Error(),
+				})
+				continue
+			}
 			s.logger.Warn("Task marked as pending but has different status", map[string]interface{}{
 				"task_id": taskID,
 				"status":  task.Status.String(),
@@ -221,13 +229,13 @@ func (s *Scheduler) LoadState() error {
 			task.Status = pb.TaskStatus_PENDING
 		}
 
-		s.pendingTasks = append(s.pendingTasks, task)
+		s.taskQueue.Enqueue(task)
 	}
 
 	s.logger.Info("Scheduler state loaded successfully", map[string]interface{}{
 		"workers":       len(s.workers),
 		"tasks":         len(s.tasks),
-		"pending_tasks": len(s.pendingTasks),
+		"pending_tasks": s.taskQueue.Len(),
 	})
 
 	return nil

@@ -29,7 +29,7 @@ func (s *Scheduler) updateMetrics() {
 	}
 
 	s.metrics.SetActiveTasks(activeCount)
-	s.metrics.SetPendingTasks(len(s.pendingTasks))
+	s.metrics.SetPendingTasks(s.taskQueue.Len())
 	s.metrics.SetActiveWorkers(len(s.workers))
 }
 

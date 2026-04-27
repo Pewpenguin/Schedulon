@@ -22,7 +22,7 @@ type Scheduler struct {
 	mu                 sync.RWMutex
 	workers            map[string]*Worker
 	tasks              map[string]*Task
-	pendingTasks       []*Task
+	taskQueue          *TaskQueue
 	workloadPolicy     WorkloadPolicy
 	metrics            *metrics.SchedulerMetrics
 	logger             *logging.Logger
@@ -76,7 +76,7 @@ func NewScheduler(policy WorkloadPolicy) *Scheduler {
 	return &Scheduler{
 		workers:        make(map[string]*Worker),
 		tasks:          make(map[string]*Task),
-		pendingTasks:   make([]*Task, 0),
+		taskQueue:      NewTaskQueue(),
 		workloadPolicy: policy,
 		logger:         logger,
 	}
@@ -125,7 +125,7 @@ func (s *Scheduler) RegisterWorker(ctx context.Context, req *pb.RegisterWorkerRe
 	})
 
 	s.recordWorkerRegistration()
-	s.UpdatePersistentState()
+	s.updatePersistentStateLocked()
 	s.assignPendingTasks()
 
 	return &pb.RegisterWorkerResponse{
@@ -139,61 +139,108 @@ func (s *Scheduler) RequestTask(ctx context.Context, req *pb.TaskRequest) (*pb.T
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	if req == nil {
+		return nil, status.Error(codes.InvalidArgument, "request is required")
+	}
+
 	workerID := req.WorkerId
+	if strings.TrimSpace(workerID) == "" {
+		return nil, status.Error(codes.InvalidArgument, "worker_id is required")
+	}
+
+	// RequestTask is worker-polling only; clients must use SubmitTask.
+	if req.Task != nil {
+		return nil, status.Error(codes.InvalidArgument, "task submission via RequestTask is not allowed; use SubmitTask")
+	}
+
 	worker, exists := s.workers[workerID]
 	if !exists {
 		return nil, status.Errorf(codes.NotFound, "Worker not registered: %s", workerID)
 	}
 
-	if len(s.pendingTasks) == 0 {
+	if len(req.AvailableGpuIds) > 0 {
+		availableByID := make(map[string]struct{}, len(req.AvailableGpuIds))
+		for _, gpuID := range req.AvailableGpuIds {
+			availableByID[gpuID] = struct{}{}
+		}
+		for _, gpu := range worker.GPUs {
+			_, available := availableByID[gpu.ID]
+			gpu.Available = available
+		}
+	}
+
+	task := s.taskQueue.Dequeue(worker)
+	if task == nil {
 		return nil, status.Error(codes.NotFound, "No pending tasks available")
 	}
 
-	for i, task := range s.pendingTasks {
-		workerID, gpuIDs, err := s.workloadPolicy.AssignTask(s.workers, task)
-		if err != nil {
-			continue
-		}
-
-		task.Status = pb.TaskStatus_RUNNING
-		task.WorkerID = workerID
-		task.AssignedGPUs = gpuIDs
-		task.StartTime = time.Now()
-
-		worker.Status = pb.WorkerStatus_BUSY
-		s.recordWorkerStatusChange()
-		worker.Tasks[task.ID] = task
-
-		for _, gpu := range worker.GPUs {
-			for _, id := range gpuIDs {
-				if gpu.ID == id {
-					gpu.Available = false
-				}
-			}
-		}
-
-		s.pendingTasks = append(s.pendingTasks[:i], s.pendingTasks[i+1:]...)
-
-		pbTask := &pb.Task{
-			Id:            task.ID,
-			Name:          task.Name,
-			RequiredGpus:  task.RequiredGPUs,
-			MinGpuMemory:  task.MinGPUMemory,
-			Configuration: task.Configuration,
-			Status:        task.Status,
-		}
-
-		s.logger.Info("Task assigned to worker", map[string]interface{}{
-			"task_id":   task.ID,
-			"worker_id": workerID,
-		})
-
-		s.UpdatePersistentState()
-
-		return pbTask, nil
+	if task.Status != pb.TaskStatus_PENDING {
+		s.taskQueue.Enqueue(task)
+		return nil, status.Error(codes.FailedPrecondition, "task is not in PENDING state")
 	}
 
-	return nil, status.Error(codes.ResourceExhausted, "No suitable tasks for this worker")
+	assignedGPUIDs := selectGPUIDsForTask(worker, task)
+	if len(assignedGPUIDs) < int(task.RequiredGPUs) {
+		s.taskQueue.Enqueue(task)
+		return nil, status.Error(codes.ResourceExhausted, "No suitable tasks for this worker")
+	}
+
+	if err := ValidateTransition(task.Status.String(), pb.TaskStatus_RUNNING.String()); err != nil {
+		s.taskQueue.Enqueue(task)
+		return nil, status.Errorf(codes.FailedPrecondition, "invalid task state transition: %v", err)
+	}
+	task.Status = pb.TaskStatus_RUNNING
+	task.WorkerID = workerID
+	task.AssignedGPUs = assignedGPUIDs
+	task.StartTime = time.Now()
+
+	worker.Status = pb.WorkerStatus_BUSY
+	s.recordWorkerStatusChange()
+	worker.Tasks[task.ID] = task
+
+	for _, gpu := range worker.GPUs {
+		for _, id := range assignedGPUIDs {
+			if gpu.ID == id {
+				gpu.Available = false
+			}
+		}
+	}
+
+	pbTask := &pb.Task{
+		Id:            task.ID,
+		Name:          task.Name,
+		RequiredGpus:  task.RequiredGPUs,
+		MinGpuMemory:  task.MinGPUMemory,
+		Configuration: task.Configuration,
+		Status:        task.Status,
+	}
+
+	s.logger.Info("Task assigned to worker", map[string]interface{}{
+		"task_id":   task.ID,
+		"worker_id": workerID,
+	})
+
+	s.updatePersistentStateLocked()
+
+	return pbTask, nil
+}
+
+func selectGPUIDsForTask(worker *Worker, task *Task) []string {
+	if worker == nil || task == nil {
+		return nil
+	}
+
+	assigned := make([]string, 0, task.RequiredGPUs)
+	for _, gpu := range worker.GPUs {
+		if gpu.Available && gpu.MemoryMB >= task.MinGPUMemory {
+			assigned = append(assigned, gpu.ID)
+			if len(assigned) == int(task.RequiredGPUs) {
+				break
+			}
+		}
+	}
+
+	return assigned
 }
 
 func (s *Scheduler) SubmitTask(ctx context.Context, req *pb.SubmitTaskRequest) (*pb.SubmitTaskResponse, error) {
@@ -271,6 +318,9 @@ func (s *Scheduler) ReportTaskStatus(ctx context.Context, update *pb.TaskStatusU
 		return nil, status.Errorf(codes.NotFound, "Worker not found: %s", workerID)
 	}
 
+	if err := ValidateTransition(task.Status.String(), update.Status.String()); err != nil {
+		return nil, status.Errorf(codes.FailedPrecondition, "invalid task state transition: %v", err)
+	}
 	task.Status = update.Status
 	task.Progress = update.Progress
 	task.Metrics = update.Metrics
@@ -301,7 +351,7 @@ func (s *Scheduler) ReportTaskStatus(ctx context.Context, update *pb.TaskStatusU
 		"progress": update.Progress * 100,
 	})
 
-	s.UpdatePersistentState()
+	s.updatePersistentStateLocked()
 
 	return &pb.TaskStatusResponse{
 		Acknowledged: true,
@@ -370,7 +420,7 @@ func (s *Scheduler) AddTask(task *Task) {
 	defer s.mu.Unlock()
 
 	s.tasks[task.ID] = task
-	s.pendingTasks = append(s.pendingTasks, task)
+	s.taskQueue.Enqueue(task)
 
 	s.logger.Info("New task added", map[string]interface{}{
 		"task_id":       task.ID,
@@ -378,7 +428,7 @@ func (s *Scheduler) AddTask(task *Task) {
 	})
 	s.recordTaskSubmission()
 
-	s.UpdatePersistentState()
+	s.updatePersistentStateLocked()
 
 	s.assignPendingTasks()
 }
@@ -386,13 +436,27 @@ func (s *Scheduler) AddTask(task *Task) {
 func (s *Scheduler) assignPendingTasks() {
 	tasksAssigned := false
 
-	for i := 0; i < len(s.pendingTasks); i++ {
-		task := s.pendingTasks[i]
+	pendingCount := s.taskQueue.Len()
+	for i := 0; i < pendingCount; i++ {
+		task := s.taskQueue.Dequeue(nil)
+		if task == nil {
+			break
+		}
+
 		workerID, gpuIDs, err := s.workloadPolicy.AssignTask(s.workers, task)
 		if err != nil {
+			s.taskQueue.Enqueue(task)
 			continue
 		}
 
+		if err := ValidateTransition(task.Status.String(), pb.TaskStatus_RUNNING.String()); err != nil {
+			s.taskQueue.Enqueue(task)
+			s.logger.Warn("Skipped task assignment due to invalid state transition", map[string]interface{}{
+				"task_id": task.ID,
+				"error":   err.Error(),
+			})
+			continue
+		}
 		task.Status = pb.TaskStatus_RUNNING
 		task.WorkerID = workerID
 		task.AssignedGPUs = gpuIDs
@@ -410,9 +474,6 @@ func (s *Scheduler) assignPendingTasks() {
 			}
 		}
 
-		s.pendingTasks = append(s.pendingTasks[:i], s.pendingTasks[i+1:]...)
-		i--
-
 		s.logger.Info("Task assigned to worker", map[string]interface{}{
 			"task_id":   task.ID,
 			"worker_id": workerID,
@@ -422,7 +483,7 @@ func (s *Scheduler) assignPendingTasks() {
 	}
 
 	if tasksAssigned {
-		s.UpdatePersistentState()
+		s.updatePersistentStateLocked()
 	}
 }
 
@@ -450,6 +511,10 @@ func (s *Scheduler) UpdatePersistentState() {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
+	s.updatePersistentStateLocked()
+}
+
+func (s *Scheduler) updatePersistentStateLocked() {
 	if s.persistenceManager != nil {
 		s.persistenceManager.TriggerSave()
 	}

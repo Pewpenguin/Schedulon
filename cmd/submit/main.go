@@ -2,11 +2,9 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"flag"
-	"fmt"
 	"log"
-	"os"
+	"strings"
 	"time"
 
 	pb "github.com/training-scheduler/proto"
@@ -14,43 +12,25 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 )
 
-type TaskConfig struct {
-	Name         string            `json:"name"`
-	RequiredGPUs uint32            `json:"required_gpus"`
-	MinGPUMemory uint64            `json:"min_gpu_memory"`
-	Params       map[string]string `json:"params"`
-}
-
 func main() {
 	schedulerAddr := flag.String("scheduler", "localhost:50051", "Address of the scheduler server")
-	taskName := flag.String("name", "", "Name of the training task")
+	image := flag.String("image", "", "Container image to run")
+	command := flag.String("command", "", "Command to execute (for example: \"python train.py\")")
 	requiredGPUs := flag.Uint("gpus", 1, "Number of GPUs required for the task")
-	minGPUMemory := flag.Uint64("memory", 4096, "Minimum GPU memory required in MB")
-	configFile := flag.String("config", "", "Path to task configuration file (JSON)")
+	priority := flag.Int("priority", 0, "Task priority (higher means more important)")
 	flag.Parse()
 
-	var taskConfig TaskConfig
-
-	if *configFile != "" {
-		configData, err := os.ReadFile(*configFile)
-		if err != nil {
-			log.Fatalf("Failed to read config file: %v", err)
-		}
-
-		if err := json.Unmarshal(configData, &taskConfig); err != nil {
-			log.Fatalf("Failed to parse config file: %v", err)
-		}
-	} else {
-		if *taskName == "" {
-			log.Fatal("Task name must be specified")
-		}
-
-		taskConfig = TaskConfig{
-			Name:         *taskName,
-			RequiredGPUs: uint32(*requiredGPUs),
-			MinGPUMemory: *minGPUMemory,
-			Params:       make(map[string]string),
-		}
+	if strings.TrimSpace(*image) == "" {
+		log.Fatal("--image is required")
+	}
+	if strings.TrimSpace(*command) == "" {
+		log.Fatal("--command is required")
+	}
+	if *requiredGPUs == 0 {
+		log.Fatal("--gpus must be greater than 0")
+	}
+	if *priority < 0 {
+		log.Fatal("--priority must be non-negative")
 	}
 
 	conn, err := grpc.NewClient(*schedulerAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
@@ -59,36 +39,24 @@ func main() {
 	}
 	defer conn.Close()
 
-	configJSON, err := json.Marshal(taskConfig.Params)
-	if err != nil {
-		log.Fatalf("Failed to marshal task parameters: %v", err)
-	}
-
-	task := &pb.Task{
-		Id:            fmt.Sprintf("task-%d", time.Now().UnixNano()),
-		Name:          taskConfig.Name,
-		RequiredGpus:  taskConfig.RequiredGPUs,
-		MinGpuMemory:  taskConfig.MinGPUMemory,
-		Configuration: configJSON,
-		Status:        pb.TaskStatus_PENDING,
-	}
-
 	client := pb.NewTrainingSchedulerClient(conn)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	req := &pb.TaskRequest{
-		Task: task,
+	req := &pb.SubmitTaskRequest{
+		Image:        *image,
+		Command:      strings.Fields(*command),
+		RequiredGpus: int32(*requiredGPUs),
+		Priority:     int32(*priority),
 	}
 
-	_, err = client.RequestTask(ctx, req)
+	resp, err := client.SubmitTask(ctx, req)
 	if err != nil {
 		log.Fatalf("Failed to submit task: %v", err)
 	}
 
-	log.Printf("Task submitted successfully: %s", task.Id)
-	log.Printf("  Name: %s", task.Name)
-	log.Printf("  Required GPUs: %d", task.RequiredGpus)
-	log.Printf("  Min GPU Memory: %d MB", task.MinGpuMemory)
+	log.Printf("Task submitted successfully")
+	log.Printf("  Task ID: %s", resp.TaskId)
+	log.Printf("  Status: %s", resp.Status)
 }
