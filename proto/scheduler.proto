@@ -92,13 +92,22 @@ message TaskRequest {
   map<string, string> priority_info = 4;
 }
 
-// Request to submit a task
-message SubmitTaskRequest {
+message ExecutionSpec {
   string image = 1;
   repeated string command = 2;
-  int32 required_gpus = 3;
-  int32 priority = 4;
-  string idempotency_key = 5;
+  repeated string args = 3;
+  map<string, string> env = 4;
+  string working_dir = 5;
+  string artifact_path = 6;
+  int32 timeout_seconds = 7;
+}
+
+// Request to submit a task
+message SubmitTaskRequest {
+  ExecutionSpec exec = 1;
+  int32 required_gpus = 2;
+  int32 priority = 3;
+  string idempotency_key = 4;
 }
 
 // Response to task submission

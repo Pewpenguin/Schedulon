@@ -38,6 +38,7 @@ type Task struct {
 	ID            string
 	Name          string
 	Configuration []byte
+	ExecutionSpec *pb.ExecutionSpec
 	Status        pb.TaskStatus
 	Progress      float32
 	GPUIDs        []string
