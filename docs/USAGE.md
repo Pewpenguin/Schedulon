@@ -72,6 +72,20 @@ go run cmd/submit/main.go --scheduler=localhost:50051 --name="ResNet50 Training"
 go run cmd/submit/main.go --scheduler=localhost:50051 --config=examples/sample_task.json
 ```
 
+Example `examples/sample_task.json`:
+
+```json
+{
+  "exec": {
+    "image": "python:3.10",
+    "command": ["python"],
+    "args": ["-c", "print('training simulation')"]
+  },
+  "required_gpus": 0,
+  "priority": 1
+}
+```
+
 Options:
 - `--scheduler`: Address of the scheduler server (default: "localhost:50051")
 - `--name`: Name of the training task
@@ -96,23 +110,17 @@ Options:
 
 ## Task Configuration
 
-Training tasks can be configured using JSON files. Here's an example configuration:
+Training tasks can be configured using JSON files. For container-based execution, define an `exec` block:
 
 ```json
 {
-  "name": "ResNet50 Training",
-  "required_gpus": 2,
-  "min_gpu_memory": 8192,
-  "params": {
-    "model": "resnet50",
-    "dataset": "imagenet",
-    "batch_size": "64",
-    "learning_rate": "0.001",
-    "epochs": "90",
-    "optimizer": "sgd",
-    "momentum": "0.9",
-    "weight_decay": "0.0001"
-  }
+  "exec": {
+    "image": "python:3.10",
+    "command": ["python"],
+    "args": ["-c", "print('training simulation')"]
+  },
+  "required_gpus": 0,
+  "priority": 1
 }
 ```
 

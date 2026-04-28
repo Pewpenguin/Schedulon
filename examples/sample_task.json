@@ -1,4 +1,13 @@
 {
+  "exec": {
+    "image": "python:3.10",
+    "command": ["python"],
+    "args": ["-c", "print('training simulation')"]
+  },
+  "required_gpus": 0,
+  "priority": 1
+}
+{
   "name": "ResNet50 Training",
   "required_gpus": 2,
   "min_gpu_memory": 8192,
