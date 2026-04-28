@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strconv"
@@ -44,6 +45,11 @@ type Task struct {
 	GPUIDs        []string
 	Metrics       []*pb.Metric
 	DoneCh        chan struct{}
+	LogPath       string
+	ArtifactPath  string
+	StartedAt     time.Time
+	CompletedAt   time.Time
+	Duration      time.Duration
 }
 
 func NewWorker(schedulerAddr string, gpus []*pb.GPU) (*Worker, error) {
@@ -182,11 +188,13 @@ func (w *Worker) executeTask(ctx context.Context, pbTask *pb.Task) {
 		ID:            pbTask.Id,
 		Name:          pbTask.Name,
 		Configuration: pbTask.Configuration,
+		ExecutionSpec: parseExecutionSpec(pbTask.Configuration),
 		Status:        pb.TaskStatus_RUNNING,
 		Progress:      0.0,
 		GPUIDs:        assignedGPUIDs,
 		Metrics:       make([]*pb.Metric, 0),
 		DoneCh:        make(chan struct{}),
+		StartedAt:     time.Now(),
 	}
 
 	w.Status = pb.WorkerStatus_BUSY
@@ -197,56 +205,45 @@ func (w *Worker) executeTask(ctx context.Context, pbTask *pb.Task) {
 	w.reportTaskStatus(ctx, task)
 
 	go func() {
-		for progress := 0.0; progress <= 1.0; progress += 0.05 {
-			select {
-			case <-ctx.Done():
-				w.mu.Lock()
-				task.Status = pb.TaskStatus_FAILED
-				task.Progress = float32(progress)
-				w.mu.Unlock()
-
-				w.reportTaskStatus(ctx, task)
-				return
-			default:
-				w.mu.RLock()
-				paused := w.Paused
-				w.mu.RUnlock()
-
-				if paused {
-					w.logger.Info("Task paused", map[string]interface{}{
-						"task_id":  task.ID,
-						"progress": float32(progress) * 100,
-					})
-					time.Sleep(5 * time.Second)
-					continue
-				}
-
-				w.mu.Lock()
-				task.Progress = float32(progress)
-
-				task.Metrics = append(task.Metrics, &pb.Metric{
-					Name:      "loss",
-					Value:     float32(1.0 - progress),
-					Timestamp: uint64(time.Now().Unix()),
-				})
-				w.mu.Unlock()
-
-				w.recordTaskProgress(task)
-				w.reportTaskStatus(ctx, task)
-
-				w.mu.RLock()
-				metricFreq := w.MetricFrequency
-				w.mu.RUnlock()
-				time.Sleep(metricFreq)
-			}
-		}
+		executor := NewDockerExecutor()
+		result, err := executor.Run(task)
 
 		w.mu.Lock()
-		task.Status = pb.TaskStatus_COMPLETED
-		task.Progress = 1.0
+		task.CompletedAt = time.Now()
+		if result != nil {
+			task.StartedAt = result.StartTime
+			task.CompletedAt = result.EndTime
+			task.Duration = result.EndTime.Sub(result.StartTime)
+			task.LogPath = result.LogPath
+			task.ArtifactPath = result.ArtifactPath
+		} else {
+			task.Duration = task.CompletedAt.Sub(task.StartedAt)
+		}
+
+		if err == nil && result != nil && result.ExitCode == 0 {
+			task.Status = pb.TaskStatus_COMPLETED
+			task.Progress = 1.0
+		} else {
+			task.Status = pb.TaskStatus_FAILED
+		}
+		task.Metrics = append(task.Metrics, &pb.Metric{
+			Name:      "execution_duration_seconds",
+			Value:     float32(task.Duration.Seconds()),
+			Timestamp: uint64(time.Now().Unix()),
+		})
 		w.mu.Unlock()
 
-		w.recordTaskCompletion(task)
+		if task.Status == pb.TaskStatus_COMPLETED {
+			w.recordTaskCompletion(task)
+		}
+		if task.Status == pb.TaskStatus_FAILED && err != nil {
+			w.logger.Error("Task execution failed", map[string]interface{}{
+				"task_id":       task.ID,
+				"error":         err.Error(),
+				"log_path":      task.LogPath,
+				"artifact_path": task.ArtifactPath,
+			})
+		}
 		w.reportTaskStatus(ctx, task)
 
 		w.mu.Lock()
@@ -276,7 +273,14 @@ func (w *Worker) reportTaskStatus(ctx context.Context, task *Task) {
 		WorkerId: w.ID,
 		Status:   task.Status,
 		Progress: task.Progress,
-		Message:  fmt.Sprintf("Task %s progress: %.2f%%", task.ID, task.Progress*100),
+		Message: fmt.Sprintf(
+			"Task %s progress: %.2f%%, duration=%s, log=%s, artifact=%s",
+			task.ID,
+			task.Progress*100,
+			task.Duration.String(),
+			task.LogPath,
+			task.ArtifactPath,
+		),
 		Metrics:  task.Metrics,
 	}
 	w.mu.RUnlock()
@@ -288,6 +292,19 @@ func (w *Worker) reportTaskStatus(ctx context.Context, task *Task) {
 			"error":   err.Error(),
 		})
 	}
+}
+
+func parseExecutionSpec(configuration []byte) *pb.ExecutionSpec {
+	if len(configuration) == 0 {
+		return nil
+	}
+
+	var spec pb.ExecutionSpec
+	if err := json.Unmarshal(configuration, &spec); err != nil {
+		return nil
+	}
+
+	return &spec
 }
 
 func (w *Worker) reportStatus(ctx context.Context) {
