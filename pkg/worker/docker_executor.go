@@ -16,7 +16,6 @@ import (
 
 const (
 	defaultTaskLogRoot      = "/var/lib/scheduler-worker/tasks"
-	defaultArtifactMount    = "artifacts:/artifacts"
 	defaultLogFileName      = "logs.txt"
 	defaultTimeoutExitCode  = -1
 )
@@ -24,14 +23,12 @@ const (
 // DockerExecutor runs task workloads through the docker CLI.
 // It intentionally uses os/exec for simplicity.
 type DockerExecutor struct {
-	TaskLogRoot   string
-	ArtifactMount string
+	TaskLogRoot string
 }
 
 func NewDockerExecutor() *DockerExecutor {
 	return &DockerExecutor{
-		TaskLogRoot:   defaultTaskLogRoot,
-		ArtifactMount: defaultArtifactMount,
+		TaskLogRoot: defaultTaskLogRoot,
 	}
 }
 
@@ -61,7 +58,12 @@ func (e *DockerExecutor) Run(task *Task) (*ExecutionResult, error) {
 	}
 	defer logFile.Close()
 
-	dockerArgs := e.buildDockerArgs(task.ExecutionSpec)
+	artifactHostPath, artifactContainerPath, mountArtifacts, err := PrepareArtifactStorage(task.ID, task.ExecutionSpec)
+	if err != nil {
+		return nil, err
+	}
+
+	dockerArgs := e.buildDockerArgs(task.ExecutionSpec, artifactHostPath, artifactContainerPath, mountArtifacts)
 
 	cmdCtx := context.Background()
 	var cancel context.CancelFunc
@@ -82,7 +84,7 @@ func (e *DockerExecutor) Run(task *Task) (*ExecutionResult, error) {
 		StartTime:    startTime,
 		EndTime:      endTime,
 		LogPath:      logPath,
-		ArtifactPath: task.ExecutionSpec.ArtifactPath,
+		ArtifactPath: artifactHostPath,
 	}
 
 	if errors.Is(cmdCtx.Err(), context.DeadlineExceeded) {
@@ -110,7 +112,7 @@ func (e *DockerExecutor) taskLogRoot() string {
 	return e.TaskLogRoot
 }
 
-func (e *DockerExecutor) buildDockerArgs(spec *pb.ExecutionSpec) []string {
+func (e *DockerExecutor) buildDockerArgs(spec *pb.ExecutionSpec, artifactHostPath string, artifactContainerPath string, mountArtifacts bool) []string {
 	args := []string{"run", "--rm"}
 
 	if spec == nil {
@@ -126,11 +128,9 @@ func (e *DockerExecutor) buildDockerArgs(spec *pb.ExecutionSpec) []string {
 		args = append(args, "-e", fmt.Sprintf("%s=%s", key, spec.Env[key]))
 	}
 
-	artifactMount := e.ArtifactMount
-	if strings.TrimSpace(artifactMount) == "" {
-		artifactMount = defaultArtifactMount
+	if mountArtifacts {
+		args = append(args, "-v", fmt.Sprintf("%s:%s", artifactHostPath, artifactContainerPath))
 	}
-	args = append(args, "-v", artifactMount)
 
 	if strings.TrimSpace(spec.WorkingDir) != "" {
 		args = append(args, "-w", spec.WorkingDir)

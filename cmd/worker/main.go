@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -26,7 +27,28 @@ func main() {
 	metricsPort := flag.Int("metrics-port", 9092, "The metrics server port")
 	logLevel := flag.String("log-level", "info", "Log level (debug, info, warn, error)")
 	logDir := flag.String("log-dir", "/var/log/worker", "Directory for log files")
+	workDir := flag.String("work-dir", "/var/lib/scheduler-worker", "Worker runtime data directory")
+	dockerSocket := flag.String("docker-socket", "/var/run/docker.sock", "Path to Docker socket")
+	artifactDir := flag.String("artifact-dir", "/var/lib/scheduler-worker/artifacts", "Directory for task artifacts")
 	flag.Parse()
+
+	requiredDirs := []string{
+		*workDir,
+		filepath.Join(*workDir, "tasks"),
+		*artifactDir,
+	}
+	for _, dir := range requiredDirs {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			log.Fatalf("Failed to create required directory %s: %v", dir, err)
+		}
+	}
+
+	dockerSocketDir := filepath.Dir(*dockerSocket)
+	if dockerSocketDir != "" && dockerSocketDir != "." {
+		if err := os.MkdirAll(dockerSocketDir, 0o755); err != nil {
+			log.Fatalf("Failed to create docker socket directory %s: %v", dockerSocketDir, err)
+		}
+	}
 
 	// Initialize logger
 	loggerConfig := logging.Config{
@@ -101,6 +123,9 @@ func main() {
 	logger.Info("Worker started", map[string]interface{}{
 		"gpu_count":      len(gpus),
 		"scheduler_addr": *schedulerAddr,
+		"work_dir":       *workDir,
+		"docker_socket":  *dockerSocket,
+		"artifact_dir":   *artifactDir,
 	})
 
 	sigCh := make(chan os.Signal, 1)
