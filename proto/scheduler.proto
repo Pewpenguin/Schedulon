@@ -23,6 +23,9 @@ service TrainingScheduler {
   
   // List all registered workers
   rpc ListWorkers(ListWorkersRequest) returns (ListWorkersResponse);
+
+  // Worker heartbeat to signal liveness
+  rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
 }
 
 // Worker information
@@ -183,4 +186,15 @@ message TaskSummary {
   string name = 2;
   TaskStatus status = 3;
   float progress = 4;
+}
+
+// Worker heartbeat request
+message HeartbeatRequest {
+  string worker_id = 1;
+  int32 running_tasks = 2;
+}
+
+// Worker heartbeat response
+message HeartbeatResponse {
+  bool ok = 1;
 }

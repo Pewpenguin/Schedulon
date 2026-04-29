@@ -29,10 +29,14 @@ type Worker struct {
 	Paused      bool
 
 	MetricFrequency time.Duration
+	HeartbeatInterval time.Duration
 	TaskPriority    map[string]int
 	GPUAllocation   string
 	metrics         *metrics.WorkerMetrics
 	logger          *logging.Logger
+	runCtx          context.Context
+	runCancel       context.CancelFunc
+	stopOnce        sync.Once
 }
 
 type Task struct {
@@ -78,6 +82,7 @@ func NewWorker(schedulerAddr string, gpus []*pb.GPU) (*Worker, error) {
 		Conn:            conn,
 		ActiveTasks:     make(map[string]*Task),
 		MetricFrequency: 2 * time.Second,
+		HeartbeatInterval: 10 * time.Second,
 		TaskPriority:    make(map[string]int),
 		GPUAllocation:   "packed",
 		logger:          logger,
@@ -110,11 +115,78 @@ func (w *Worker) Start(ctx context.Context) error {
 		return err
 	}
 
-	go w.pollForTasks(ctx)
+	w.mu.Lock()
+	if w.runCancel != nil {
+		w.runCancel()
+	}
+	w.runCtx, w.runCancel = context.WithCancel(ctx)
+	w.stopOnce = sync.Once{}
+	runCtx := w.runCtx
+	w.mu.Unlock()
 
-	go w.reportStatus(ctx)
+	go w.pollForTasks(runCtx)
+
+	go w.reportStatus(runCtx)
+
+	go w.startHeartbeatLoop()
 
 	return nil
+}
+
+func (w *Worker) startHeartbeatLoop() {
+	w.mu.RLock()
+	interval := w.HeartbeatInterval
+	ctx := w.runCtx
+	w.mu.RUnlock()
+
+	if interval <= 0 {
+		interval = 10 * time.Second
+	}
+	if ctx == nil {
+		return
+	}
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	sendHeartbeat := func() {
+		w.mu.RLock()
+		workerID := w.ID
+		runningTasks := int32(len(w.ActiveTasks))
+		w.mu.RUnlock()
+
+		hbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+
+		_, err := w.Client.Heartbeat(hbCtx, &pb.HeartbeatRequest{
+			WorkerId:     workerID,
+			RunningTasks: runningTasks,
+		})
+		if err != nil {
+			w.logger.Warn("Worker heartbeat failed", map[string]interface{}{
+				"worker_id":     workerID,
+				"running_tasks": runningTasks,
+				"error":         err.Error(),
+			})
+			return
+		}
+
+		w.logger.Info("Worker heartbeat sent", map[string]interface{}{
+			"worker_id":     workerID,
+			"running_tasks": runningTasks,
+		})
+	}
+
+	sendHeartbeat()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			sendHeartbeat()
+		}
+	}
 }
 
 func (w *Worker) pollForTasks(ctx context.Context) {
@@ -461,6 +533,11 @@ func (w *Worker) handleCommand(ctx context.Context, command *pb.WorkerCommand) {
 				w.logger.Info("Updating GPU allocation strategy", map[string]interface{}{"strategy": gpuAllocation})
 				w.updateGPUAllocationStrategy(gpuAllocation)
 			}
+
+			if heartbeatInterval, exists := command.Params["heartbeat_interval"]; exists {
+				w.logger.Info("Updating heartbeat interval", map[string]interface{}{"interval": heartbeatInterval})
+				w.updateHeartbeatInterval(heartbeatInterval)
+			}
 		}
 
 	case "SYNC_STATE":
@@ -626,15 +703,27 @@ func (w *Worker) stopTask(ctx context.Context, taskID string) {
 }
 
 func (w *Worker) Stop() {
-	if w.Conn != nil {
-		w.Conn.Close()
-	}
+	w.stopOnce.Do(func() {
+		w.mu.Lock()
+		cancel := w.runCancel
+		w.runCancel = nil
+		w.runCtx = nil
+		w.mu.Unlock()
+
+		if cancel != nil {
+			cancel()
+		}
+	})
 
 	w.mu.RLock()
 	for _, task := range w.ActiveTasks {
 		<-task.DoneCh
 	}
 	w.mu.RUnlock()
+
+	if w.Conn != nil {
+		w.Conn.Close()
+	}
 
 	w.logger.Info("Worker stopped", nil)
 }
@@ -664,6 +753,29 @@ func (w *Worker) updateMetricFrequency(freqStr string) {
 	for _, task := range w.ActiveTasks {
 		w.logger.Info("Applied new metric frequency to task", map[string]interface{}{"task_id": task.ID})
 	}
+}
+
+func (w *Worker) updateHeartbeatInterval(intervalStr string) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	interval, err := time.ParseDuration(intervalStr)
+	if err != nil {
+		w.logger.Error("Invalid heartbeat interval format", map[string]interface{}{"error": err.Error()})
+		return
+	}
+
+	if interval < time.Second || interval > 5*time.Minute {
+		w.logger.Warn("Heartbeat interval out of range", map[string]interface{}{
+			"interval": intervalStr,
+			"min":      "1s",
+			"max":      "5m",
+		})
+		return
+	}
+
+	w.HeartbeatInterval = interval
+	w.logger.Info("Heartbeat interval updated", map[string]interface{}{"interval": interval.String()})
 }
 
 func (w *Worker) updateTaskPrioritySettings(priorityStr string) {

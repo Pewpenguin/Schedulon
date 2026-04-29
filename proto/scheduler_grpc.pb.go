@@ -25,6 +25,7 @@ const (
 	TrainingScheduler_ReportTaskStatus_FullMethodName = "/scheduler.TrainingScheduler/ReportTaskStatus"
 	TrainingScheduler_MonitorWorker_FullMethodName    = "/scheduler.TrainingScheduler/MonitorWorker"
 	TrainingScheduler_ListWorkers_FullMethodName      = "/scheduler.TrainingScheduler/ListWorkers"
+	TrainingScheduler_Heartbeat_FullMethodName        = "/scheduler.TrainingScheduler/Heartbeat"
 )
 
 // TrainingSchedulerClient is the client API for TrainingScheduler service.
@@ -45,6 +46,8 @@ type TrainingSchedulerClient interface {
 	MonitorWorker(ctx context.Context, in *WorkerStatusRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[WorkerStatusResponse], error)
 	// List all registered workers
 	ListWorkers(ctx context.Context, in *ListWorkersRequest, opts ...grpc.CallOption) (*ListWorkersResponse, error)
+	// Worker heartbeat to signal liveness
+	Heartbeat(ctx context.Context, in *HeartbeatRequest, opts ...grpc.CallOption) (*HeartbeatResponse, error)
 }
 
 type trainingSchedulerClient struct {
@@ -124,6 +127,16 @@ func (c *trainingSchedulerClient) ListWorkers(ctx context.Context, in *ListWorke
 	return out, nil
 }
 
+func (c *trainingSchedulerClient) Heartbeat(ctx context.Context, in *HeartbeatRequest, opts ...grpc.CallOption) (*HeartbeatResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(HeartbeatResponse)
+	err := c.cc.Invoke(ctx, TrainingScheduler_Heartbeat_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // TrainingSchedulerServer is the server API for TrainingScheduler service.
 // All implementations must embed UnimplementedTrainingSchedulerServer
 // for forward compatibility.
@@ -142,6 +155,8 @@ type TrainingSchedulerServer interface {
 	MonitorWorker(*WorkerStatusRequest, grpc.ServerStreamingServer[WorkerStatusResponse]) error
 	// List all registered workers
 	ListWorkers(context.Context, *ListWorkersRequest) (*ListWorkersResponse, error)
+	// Worker heartbeat to signal liveness
+	Heartbeat(context.Context, *HeartbeatRequest) (*HeartbeatResponse, error)
 	mustEmbedUnimplementedTrainingSchedulerServer()
 }
 
@@ -169,6 +184,9 @@ func (UnimplementedTrainingSchedulerServer) MonitorWorker(*WorkerStatusRequest, 
 }
 func (UnimplementedTrainingSchedulerServer) ListWorkers(context.Context, *ListWorkersRequest) (*ListWorkersResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListWorkers not implemented")
+}
+func (UnimplementedTrainingSchedulerServer) Heartbeat(context.Context, *HeartbeatRequest) (*HeartbeatResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Heartbeat not implemented")
 }
 func (UnimplementedTrainingSchedulerServer) mustEmbedUnimplementedTrainingSchedulerServer() {}
 func (UnimplementedTrainingSchedulerServer) testEmbeddedByValue()                           {}
@@ -292,6 +310,24 @@ func _TrainingScheduler_ListWorkers_Handler(srv interface{}, ctx context.Context
 	return interceptor(ctx, in, info, handler)
 }
 
+func _TrainingScheduler_Heartbeat_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(HeartbeatRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(TrainingSchedulerServer).Heartbeat(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: TrainingScheduler_Heartbeat_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(TrainingSchedulerServer).Heartbeat(ctx, req.(*HeartbeatRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // TrainingScheduler_ServiceDesc is the grpc.ServiceDesc for TrainingScheduler service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -318,6 +354,10 @@ var TrainingScheduler_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ListWorkers",
 			Handler:    _TrainingScheduler_ListWorkers_Handler,
+		},
+		{
+			MethodName: "Heartbeat",
+			Handler:    _TrainingScheduler_Heartbeat_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

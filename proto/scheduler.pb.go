@@ -1375,6 +1375,104 @@ func (x *TaskSummary) GetProgress() float32 {
 	return 0
 }
 
+// Worker heartbeat request
+type HeartbeatRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	WorkerId      string                 `protobuf:"bytes,1,opt,name=worker_id,json=workerId,proto3" json:"worker_id,omitempty"`
+	RunningTasks  int32                  `protobuf:"varint,2,opt,name=running_tasks,json=runningTasks,proto3" json:"running_tasks,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *HeartbeatRequest) Reset() {
+	*x = HeartbeatRequest{}
+	mi := &file_proto_scheduler_proto_msgTypes[19]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *HeartbeatRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*HeartbeatRequest) ProtoMessage() {}
+
+func (x *HeartbeatRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_scheduler_proto_msgTypes[19]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use HeartbeatRequest.ProtoReflect.Descriptor instead.
+func (*HeartbeatRequest) Descriptor() ([]byte, []int) {
+	return file_proto_scheduler_proto_rawDescGZIP(), []int{19}
+}
+
+func (x *HeartbeatRequest) GetWorkerId() string {
+	if x != nil {
+		return x.WorkerId
+	}
+	return ""
+}
+
+func (x *HeartbeatRequest) GetRunningTasks() int32 {
+	if x != nil {
+		return x.RunningTasks
+	}
+	return 0
+}
+
+// Worker heartbeat response
+type HeartbeatResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Ok            bool                   `protobuf:"varint,1,opt,name=ok,proto3" json:"ok,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *HeartbeatResponse) Reset() {
+	*x = HeartbeatResponse{}
+	mi := &file_proto_scheduler_proto_msgTypes[20]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *HeartbeatResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*HeartbeatResponse) ProtoMessage() {}
+
+func (x *HeartbeatResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_scheduler_proto_msgTypes[20]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use HeartbeatResponse.ProtoReflect.Descriptor instead.
+func (*HeartbeatResponse) Descriptor() ([]byte, []int) {
+	return file_proto_scheduler_proto_rawDescGZIP(), []int{20}
+}
+
+func (x *HeartbeatResponse) GetOk() bool {
+	if x != nil {
+		return x.Ok
+	}
+	return false
+}
+
 var File_proto_scheduler_proto protoreflect.FileDescriptor
 
 const file_proto_scheduler_proto_rawDesc = "" +
@@ -1479,7 +1577,12 @@ const file_proto_scheduler_proto_rawDesc = "" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12-\n" +
 	"\x06status\x18\x03 \x01(\x0e2\x15.scheduler.TaskStatusR\x06status\x12\x1a\n" +
-	"\bprogress\x18\x04 \x01(\x02R\bprogress*:\n" +
+	"\bprogress\x18\x04 \x01(\x02R\bprogress\"T\n" +
+	"\x10HeartbeatRequest\x12\x1b\n" +
+	"\tworker_id\x18\x01 \x01(\tR\bworkerId\x12#\n" +
+	"\rrunning_tasks\x18\x02 \x01(\x05R\frunningTasks\"#\n" +
+	"\x11HeartbeatResponse\x12\x0e\n" +
+	"\x02ok\x18\x01 \x01(\bR\x02ok*:\n" +
 	"\fWorkerStatus\x12\b\n" +
 	"\x04IDLE\x10\x00\x12\b\n" +
 	"\x04BUSY\x10\x01\x12\v\n" +
@@ -1492,7 +1595,7 @@ const file_proto_scheduler_proto_rawDesc = "" +
 	"\tCOMPLETED\x10\x02\x12\n" +
 	"\n" +
 	"\x06FAILED\x10\x03\x12\f\n" +
-	"\bCANCELED\x10\x042\xdf\x03\n" +
+	"\bCANCELED\x10\x042\xa7\x04\n" +
 	"\x11TrainingScheduler\x12U\n" +
 	"\x0eRegisterWorker\x12 .scheduler.RegisterWorkerRequest\x1a!.scheduler.RegisterWorkerResponse\x12I\n" +
 	"\n" +
@@ -1500,7 +1603,8 @@ const file_proto_scheduler_proto_rawDesc = "" +
 	"\vRequestTask\x12\x16.scheduler.TaskRequest\x1a\x0f.scheduler.Task\x12N\n" +
 	"\x10ReportTaskStatus\x12\x1b.scheduler.TaskStatusUpdate\x1a\x1d.scheduler.TaskStatusResponse\x12R\n" +
 	"\rMonitorWorker\x12\x1e.scheduler.WorkerStatusRequest\x1a\x1f.scheduler.WorkerStatusResponse0\x01\x12L\n" +
-	"\vListWorkers\x12\x1d.scheduler.ListWorkersRequest\x1a\x1e.scheduler.ListWorkersResponseB%Z#github.com/training-scheduler/protob\x06proto3"
+	"\vListWorkers\x12\x1d.scheduler.ListWorkersRequest\x1a\x1e.scheduler.ListWorkersResponse\x12F\n" +
+	"\tHeartbeat\x12\x1b.scheduler.HeartbeatRequest\x1a\x1c.scheduler.HeartbeatResponseB%Z#github.com/training-scheduler/protob\x06proto3"
 
 var (
 	file_proto_scheduler_proto_rawDescOnce sync.Once
@@ -1515,7 +1619,7 @@ func file_proto_scheduler_proto_rawDescGZIP() []byte {
 }
 
 var file_proto_scheduler_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_proto_scheduler_proto_msgTypes = make([]protoimpl.MessageInfo, 22)
+var file_proto_scheduler_proto_msgTypes = make([]protoimpl.MessageInfo, 24)
 var file_proto_scheduler_proto_goTypes = []any{
 	(WorkerStatus)(0),              // 0: scheduler.WorkerStatus
 	(TaskStatus)(0),                // 1: scheduler.TaskStatus
@@ -1538,9 +1642,11 @@ var file_proto_scheduler_proto_goTypes = []any{
 	(*ListWorkersResponse)(nil),    // 18: scheduler.ListWorkersResponse
 	(*WorkerInfo)(nil),             // 19: scheduler.WorkerInfo
 	(*TaskSummary)(nil),            // 20: scheduler.TaskSummary
-	nil,                            // 21: scheduler.TaskRequest.PriorityInfoEntry
-	nil,                            // 22: scheduler.ExecutionSpec.EnvEntry
-	nil,                            // 23: scheduler.WorkerCommand.ParamsEntry
+	(*HeartbeatRequest)(nil),       // 21: scheduler.HeartbeatRequest
+	(*HeartbeatResponse)(nil),      // 22: scheduler.HeartbeatResponse
+	nil,                            // 23: scheduler.TaskRequest.PriorityInfoEntry
+	nil,                            // 24: scheduler.ExecutionSpec.EnvEntry
+	nil,                            // 25: scheduler.WorkerCommand.ParamsEntry
 }
 var file_proto_scheduler_proto_depIdxs = []int32{
 	3,  // 0: scheduler.Worker.gpus:type_name -> scheduler.GPU
@@ -1548,8 +1654,8 @@ var file_proto_scheduler_proto_depIdxs = []int32{
 	1,  // 2: scheduler.Task.status:type_name -> scheduler.TaskStatus
 	3,  // 3: scheduler.RegisterWorkerRequest.gpus:type_name -> scheduler.GPU
 	4,  // 4: scheduler.TaskRequest.task:type_name -> scheduler.Task
-	21, // 5: scheduler.TaskRequest.priority_info:type_name -> scheduler.TaskRequest.PriorityInfoEntry
-	22, // 6: scheduler.ExecutionSpec.env:type_name -> scheduler.ExecutionSpec.EnvEntry
+	23, // 5: scheduler.TaskRequest.priority_info:type_name -> scheduler.TaskRequest.PriorityInfoEntry
+	24, // 6: scheduler.ExecutionSpec.env:type_name -> scheduler.ExecutionSpec.EnvEntry
 	8,  // 7: scheduler.SubmitTaskRequest.exec:type_name -> scheduler.ExecutionSpec
 	1,  // 8: scheduler.TaskStatusUpdate.status:type_name -> scheduler.TaskStatus
 	12, // 9: scheduler.TaskStatusUpdate.metrics:type_name -> scheduler.Metric
@@ -1557,7 +1663,7 @@ var file_proto_scheduler_proto_depIdxs = []int32{
 	3,  // 11: scheduler.WorkerStatusResponse.gpus:type_name -> scheduler.GPU
 	20, // 12: scheduler.WorkerStatusResponse.active_tasks:type_name -> scheduler.TaskSummary
 	16, // 13: scheduler.WorkerStatusResponse.command:type_name -> scheduler.WorkerCommand
-	23, // 14: scheduler.WorkerCommand.params:type_name -> scheduler.WorkerCommand.ParamsEntry
+	25, // 14: scheduler.WorkerCommand.params:type_name -> scheduler.WorkerCommand.ParamsEntry
 	19, // 15: scheduler.ListWorkersResponse.workers:type_name -> scheduler.WorkerInfo
 	0,  // 16: scheduler.WorkerInfo.status:type_name -> scheduler.WorkerStatus
 	1,  // 17: scheduler.TaskSummary.status:type_name -> scheduler.TaskStatus
@@ -1567,14 +1673,16 @@ var file_proto_scheduler_proto_depIdxs = []int32{
 	11, // 21: scheduler.TrainingScheduler.ReportTaskStatus:input_type -> scheduler.TaskStatusUpdate
 	14, // 22: scheduler.TrainingScheduler.MonitorWorker:input_type -> scheduler.WorkerStatusRequest
 	17, // 23: scheduler.TrainingScheduler.ListWorkers:input_type -> scheduler.ListWorkersRequest
-	6,  // 24: scheduler.TrainingScheduler.RegisterWorker:output_type -> scheduler.RegisterWorkerResponse
-	10, // 25: scheduler.TrainingScheduler.SubmitTask:output_type -> scheduler.SubmitTaskResponse
-	4,  // 26: scheduler.TrainingScheduler.RequestTask:output_type -> scheduler.Task
-	13, // 27: scheduler.TrainingScheduler.ReportTaskStatus:output_type -> scheduler.TaskStatusResponse
-	15, // 28: scheduler.TrainingScheduler.MonitorWorker:output_type -> scheduler.WorkerStatusResponse
-	18, // 29: scheduler.TrainingScheduler.ListWorkers:output_type -> scheduler.ListWorkersResponse
-	24, // [24:30] is the sub-list for method output_type
-	18, // [18:24] is the sub-list for method input_type
+	21, // 24: scheduler.TrainingScheduler.Heartbeat:input_type -> scheduler.HeartbeatRequest
+	6,  // 25: scheduler.TrainingScheduler.RegisterWorker:output_type -> scheduler.RegisterWorkerResponse
+	10, // 26: scheduler.TrainingScheduler.SubmitTask:output_type -> scheduler.SubmitTaskResponse
+	4,  // 27: scheduler.TrainingScheduler.RequestTask:output_type -> scheduler.Task
+	13, // 28: scheduler.TrainingScheduler.ReportTaskStatus:output_type -> scheduler.TaskStatusResponse
+	15, // 29: scheduler.TrainingScheduler.MonitorWorker:output_type -> scheduler.WorkerStatusResponse
+	18, // 30: scheduler.TrainingScheduler.ListWorkers:output_type -> scheduler.ListWorkersResponse
+	22, // 31: scheduler.TrainingScheduler.Heartbeat:output_type -> scheduler.HeartbeatResponse
+	25, // [25:32] is the sub-list for method output_type
+	18, // [18:25] is the sub-list for method input_type
 	18, // [18:18] is the sub-list for extension type_name
 	18, // [18:18] is the sub-list for extension extendee
 	0,  // [0:18] is the sub-list for field type_name
@@ -1591,7 +1699,7 @@ func file_proto_scheduler_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_scheduler_proto_rawDesc), len(file_proto_scheduler_proto_rawDesc)),
 			NumEnums:      2,
-			NumMessages:   22,
+			NumMessages:   24,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
