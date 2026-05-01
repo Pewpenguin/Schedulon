@@ -18,6 +18,7 @@ func main() {
 	command := flag.String("command", "", "Command to execute (for example: \"python train.py\")")
 	requiredGPUs := flag.Uint("gpus", 1, "Number of GPUs required for the task")
 	priority := flag.Int("priority", 0, "Task priority (higher means more important)")
+	idempotencyKey := flag.String("idempotency-key", "", "Optional idempotency key for duplicate submission handling")
 	flag.Parse()
 
 	if strings.TrimSpace(*image) == "" {
@@ -45,10 +46,13 @@ func main() {
 	defer cancel()
 
 	req := &pb.SubmitTaskRequest{
-		Image:        *image,
-		Command:      strings.Fields(*command),
-		RequiredGpus: int32(*requiredGPUs),
-		Priority:     int32(*priority),
+		Exec: &pb.ExecutionSpec{
+			Image:   *image,
+			Command: strings.Fields(*command),
+		},
+		RequiredGpus:   int32(*requiredGPUs),
+		Priority:       int32(*priority),
+		IdempotencyKey: *idempotencyKey,
 	}
 
 	resp, err := client.SubmitTask(ctx, req)
