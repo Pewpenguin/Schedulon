@@ -22,6 +22,7 @@ type Scheduler struct {
 	mu                 sync.RWMutex
 	workers            map[string]*Worker
 	tasks              map[string]*Task
+	idempotencyIndex   map[string]string
 	taskQueue          *TaskQueue
 	workloadPolicy     WorkloadPolicy
 	leaseDuration      time.Duration
@@ -81,13 +82,14 @@ func NewScheduler(policy WorkloadPolicy) *Scheduler {
 	}
 
 	return &Scheduler{
-		workers:        make(map[string]*Worker),
-		tasks:          make(map[string]*Task),
-		taskQueue:      NewTaskQueue(),
-		workloadPolicy: policy,
-		leaseDuration:  30 * time.Second,
-		workerTimeout:  60 * time.Second,
-		logger:         logger,
+		workers:          make(map[string]*Worker),
+		tasks:            make(map[string]*Task),
+		idempotencyIndex: make(map[string]string),
+		taskQueue:        NewTaskQueue(),
+		workloadPolicy:   policy,
+		leaseDuration:    30 * time.Second,
+		workerTimeout:    60 * time.Second,
+		logger:           logger,
 	}
 }
 
@@ -304,16 +306,32 @@ func (s *Scheduler) SubmitTask(ctx context.Context, req *pb.SubmitTaskRequest) (
 		return nil, status.Error(codes.InvalidArgument, "priority must be non-negative")
 	}
 
+	idempotencyKey := strings.TrimSpace(req.IdempotencyKey)
+
+	s.mu.Lock()
+	if idempotencyKey != "" {
+		if existingTaskID, exists := s.idempotencyIndex[idempotencyKey]; exists {
+			if existingTask, taskExists := s.tasks[existingTaskID]; taskExists {
+				s.mu.Unlock()
+				s.logger.Info("Deduplicated task submission by idempotency key", map[string]interface{}{
+					"idempotency_key": idempotencyKey,
+					"task_id":         existingTaskID,
+				})
+				return &pb.SubmitTaskResponse{
+					TaskId: existingTaskID,
+					Status: existingTask.Status.String(),
+				}, nil
+			}
+			// Clean stale mapping if the corresponding task no longer exists.
+			delete(s.idempotencyIndex, idempotencyKey)
+		}
+	}
+
 	taskID := fmt.Sprintf("task-%d", time.Now().UnixNano())
 
-	// Keep the original submit payload in configuration for worker execution.
-	configBytes, err := json.Marshal(map[string]interface{}{
-		"image":           exec.GetImage(),
-		"command":         exec.GetCommand(),
-		"priority":        req.Priority,
-		"idempotency_key": req.IdempotencyKey,
-	})
+	configBytes, err := json.Marshal(exec)
 	if err != nil {
+		s.mu.Unlock()
 		s.logger.Error("Failed to marshal submitted task configuration", map[string]interface{}{
 			"error": err.Error(),
 		})
@@ -329,15 +347,29 @@ func (s *Scheduler) SubmitTask(ctx context.Context, req *pb.SubmitTaskRequest) (
 		Status:        pb.TaskStatus_PENDING,
 	}
 
+	s.tasks[task.ID] = task
+	s.taskQueue.Enqueue(task)
+	if idempotencyKey != "" {
+		s.idempotencyIndex[idempotencyKey] = task.ID
+	}
+
 	s.logger.Info("Received task submission", map[string]interface{}{
 		"task_id":         taskID,
 		"image":           exec.GetImage(),
 		"required_gpus":   req.RequiredGpus,
 		"priority":        req.Priority,
-		"idempotency_key": req.IdempotencyKey,
+		"idempotency_key": idempotencyKey,
 	})
 
-	s.AddTask(task)
+	s.logger.Info("New task added", map[string]interface{}{
+		"task_id":       task.ID,
+		"required_gpus": task.RequiredGPUs,
+	})
+	s.recordTaskSubmission()
+	s.updatePersistentStateLocked()
+	metricsSnapshot := s.metricsSnapshotLocked()
+	s.mu.Unlock()
+	s.updateMetrics(metricsSnapshot.activeTasks, metricsSnapshot.pendingTasks, metricsSnapshot.activeWorkers)
 
 	return &pb.SubmitTaskResponse{
 		TaskId: task.ID,

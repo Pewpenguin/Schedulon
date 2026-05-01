@@ -61,9 +61,10 @@ func (s *Scheduler) SaveState() error {
 	}
 
 	state := &persistence.SchedulerState{
-		Workers:      make(map[string]*persistence.WorkerState),
-		Tasks:        make(map[string]*persistence.TaskState),
-		PendingTasks: make([]string, 0, s.taskQueue.Len()),
+		Workers:         make(map[string]*persistence.WorkerState),
+		Tasks:           make(map[string]*persistence.TaskState),
+		PendingTasks:    make([]string, 0, s.taskQueue.Len()),
+		IdempotencyKeys: make(map[string]string, len(s.idempotencyIndex)),
 	}
 
 	for id, worker := range s.workers {
@@ -114,6 +115,9 @@ func (s *Scheduler) SaveState() error {
 	for _, task := range s.taskQueue.Snapshot() {
 		state.PendingTasks = append(state.PendingTasks, task.ID)
 	}
+	for key, taskID := range s.idempotencyIndex {
+		state.IdempotencyKeys[key] = taskID
+	}
 
 	err := s.persistenceManager.SaveState(state)
 	if err != nil {
@@ -148,7 +152,11 @@ func (s *Scheduler) LoadState() error {
 
 	s.workers = make(map[string]*Worker)
 	s.tasks = make(map[string]*Task)
+	s.idempotencyIndex = make(map[string]string)
 	s.taskQueue = NewTaskQueue()
+	for key, taskID := range state.IdempotencyKeys {
+		s.idempotencyIndex[key] = taskID
+	}
 
 	for id, taskState := range state.Tasks {
 		startTime := time.Time{}

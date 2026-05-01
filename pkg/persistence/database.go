@@ -84,6 +84,13 @@ type PendingTaskModel struct {
 	CreatedAt time.Time
 }
 
+type IdempotencyKeyModel struct {
+	Key       string `gorm:"primaryKey"`
+	TaskID    string `gorm:"index"`
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
 type DatabaseManager struct {
 	db     *gorm.DB
 	config DatabaseConfig
@@ -136,6 +143,7 @@ func (m *DatabaseManager) MigrateSchema() error {
 		&TaskModel{},
 		&TaskGPUModel{},
 		&PendingTaskModel{},
+		&IdempotencyKeyModel{},
 	)
 }
 
@@ -192,6 +200,16 @@ func (m *DatabaseManager) RemovePendingTask(taskID string) error {
 	return m.db.Where("task_id = ?", taskID).Delete(&PendingTaskModel{}).Error
 }
 
+func (m *DatabaseManager) SaveIdempotencyKey(key, taskID string) error {
+	record := &IdempotencyKeyModel{
+		Key:       key,
+		TaskID:    taskID,
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+	return m.db.Save(record).Error
+}
+
 func (m *DatabaseManager) GetWorkers() ([]*WorkerModel, error) {
 	var workers []*WorkerModel
 	if err := m.db.Find(&workers).Error; err != nil {
@@ -244,9 +262,26 @@ func (m *DatabaseManager) GetPendingTasks() ([]string, error) {
 	return taskIDs, nil
 }
 
+func (m *DatabaseManager) GetIdempotencyKeys() (map[string]string, error) {
+	var records []*IdempotencyKeyModel
+	if err := m.db.Find(&records).Error; err != nil {
+		return nil, err
+	}
+
+	out := make(map[string]string, len(records))
+	for _, record := range records {
+		out[record.Key] = record.TaskID
+	}
+
+	return out, nil
+}
+
 func (m *DatabaseManager) ClearAllState() error {
 	return m.db.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Exec("DELETE FROM pending_task_models").Error; err != nil {
+			return err
+		}
+		if err := tx.Exec("DELETE FROM idempotency_key_models").Error; err != nil {
 			return err
 		}
 		if err := tx.Exec("DELETE FROM task_gpu_models").Error; err != nil {

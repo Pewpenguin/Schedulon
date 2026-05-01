@@ -7,6 +7,7 @@ const (
 	TaskRunning   = "RUNNING"
 	TaskCompleted = "COMPLETED"
 	TaskFailed    = "FAILED"
+	TaskCanceled  = "CANCELED"
 )
 
 func ValidateTransition(oldState, newState string) error {
@@ -14,23 +15,22 @@ func ValidateTransition(oldState, newState string) error {
 		return nil
 	}
 
-	allowedTransitions := map[string]map[string]bool{
-		TaskPending: {
-			TaskRunning: true,
-		},
-		TaskRunning: {
-			TaskCompleted: true,
-			TaskFailed:    true,
-			TaskPending:   true, // lease reclaim / failure detector
-		},
-	}
+	switch oldState {
+	case TaskPending:
+		if newState != TaskRunning {
+			return fmt.Errorf("invalid task transition: %s -> %s", oldState, newState)
+		}
+	case TaskRunning:
+		switch newState {
+		case TaskCompleted, TaskFailed, TaskCanceled, TaskPending:
 
-	nextStates, knownState := allowedTransitions[oldState]
-	if !knownState {
-		return fmt.Errorf("invalid current task state: %s", oldState)
-	}
-	if !nextStates[newState] {
+		default:
+			return fmt.Errorf("invalid task transition: %s -> %s", oldState, newState)
+		}
+	case TaskCompleted, TaskFailed, TaskCanceled:
 		return fmt.Errorf("invalid task transition: %s -> %s", oldState, newState)
+	default:
+		return fmt.Errorf("invalid current task state: %s", oldState)
 	}
 
 	return nil

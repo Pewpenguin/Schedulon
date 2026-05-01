@@ -33,10 +33,11 @@ func DefaultConfig() Config {
 }
 
 type SchedulerState struct {
-	Workers      map[string]*WorkerState `json:"workers"`
-	Tasks        map[string]*TaskState   `json:"tasks"`
-	PendingTasks []string                `json:"pending_tasks"`
-	SavedAt      int64                   `json:"saved_at"`
+	Workers         map[string]*WorkerState `json:"workers"`
+	Tasks           map[string]*TaskState   `json:"tasks"`
+	PendingTasks    []string                `json:"pending_tasks"`
+	IdempotencyKeys map[string]string       `json:"idempotency_keys"`
+	SavedAt         int64                   `json:"saved_at"`
 }
 
 type WorkerState struct {
@@ -179,10 +180,11 @@ func (m *Manager) SaveState(state *SchedulerState) error {
 
 	state.SavedAt = time.Now().Unix()
 	m.logger.Info("Flushing scheduler state", map[string]interface{}{
-		"workers":       len(state.Workers),
-		"tasks":         len(state.Tasks),
-		"pending_tasks": len(state.PendingTasks),
-		"target":        m.config.Type,
+		"workers":          len(state.Workers),
+		"tasks":            len(state.Tasks),
+		"pending_tasks":    len(state.PendingTasks),
+		"idempotency_keys": len(state.IdempotencyKeys),
+		"target":           m.config.Type,
 	})
 
 	if m.config.Type == DatabasePersistence {
@@ -277,12 +279,18 @@ func (m *Manager) saveToDatabase(state *SchedulerState) error {
 			return fmt.Errorf("failed to save pending task %s: %v", taskID, err)
 		}
 	}
+	for key, taskID := range state.IdempotencyKeys {
+		if err := m.dbManager.SaveIdempotencyKey(key, taskID); err != nil {
+			return fmt.Errorf("failed to save idempotency key %s: %v", key, err)
+		}
+	}
 
 	m.logger.Info("Scheduler state saved to database", map[string]interface{}{
-		"workers":       len(state.Workers),
-		"tasks":         len(state.Tasks),
-		"pending_tasks": len(state.PendingTasks),
-		"timestamp":     state.SavedAt,
+		"workers":          len(state.Workers),
+		"tasks":            len(state.Tasks),
+		"pending_tasks":    len(state.PendingTasks),
+		"idempotency_keys": len(state.IdempotencyKeys),
+		"timestamp":        state.SavedAt,
 	})
 
 	return nil
@@ -294,10 +302,11 @@ func (m *Manager) loadFromDatabase() (*SchedulerState, error) {
 	}
 
 	state := &SchedulerState{
-		Workers:      make(map[string]*WorkerState),
-		Tasks:        make(map[string]*TaskState),
-		PendingTasks: make([]string, 0),
-		SavedAt:      time.Now().Unix(),
+		Workers:         make(map[string]*WorkerState),
+		Tasks:           make(map[string]*TaskState),
+		PendingTasks:    make([]string, 0),
+		IdempotencyKeys: make(map[string]string),
+		SavedAt:         time.Now().Unix(),
 	}
 
 	workerModels, err := m.dbManager.GetWorkers()
@@ -374,11 +383,17 @@ func (m *Manager) loadFromDatabase() (*SchedulerState, error) {
 	}
 
 	state.PendingTasks = pendingTaskIDs
+	idempotencyKeys, err := m.dbManager.GetIdempotencyKeys()
+	if err != nil {
+		return nil, fmt.Errorf("failed to load idempotency keys: %v", err)
+	}
+	state.IdempotencyKeys = idempotencyKeys
 
 	m.logger.Info("Scheduler state loaded from database", map[string]interface{}{
-		"workers":       len(state.Workers),
-		"tasks":         len(state.Tasks),
-		"pending_tasks": len(state.PendingTasks),
+		"workers":          len(state.Workers),
+		"tasks":            len(state.Tasks),
+		"pending_tasks":    len(state.PendingTasks),
+		"idempotency_keys": len(state.IdempotencyKeys),
 	})
 
 	return state, nil
