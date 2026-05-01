@@ -38,7 +38,6 @@ func (s *Scheduler) runFailureChecks() {
 	now := time.Now()
 	workerTO := s.effectiveWorkerTimeout()
 
-	requeued := false
 	for id, worker := range s.workers {
 		if worker.Status == pb.WorkerStatus_OFFLINE {
 			continue
@@ -48,9 +47,7 @@ func (s *Scheduler) runFailureChecks() {
 			continue
 		}
 		if now.Sub(worker.LastHeartbeat) > workerTO {
-			if s.requeueTasksForOfflineWorkerLocked(id) {
-				requeued = true
-			}
+			s.requeueTasksForOfflineWorkerLocked(id)
 			s.logger.Warn("Worker marked offline (heartbeat timeout)", map[string]interface{}{
 				"worker_id":        id,
 				"last_heartbeat":   worker.LastHeartbeat,
@@ -61,7 +58,6 @@ func (s *Scheduler) runFailureChecks() {
 		}
 	}
 
-	reclaimed := false
 	for _, task := range s.tasks {
 		if task == nil || task.Status != pb.TaskStatus_RUNNING {
 			continue
@@ -79,11 +75,6 @@ func (s *Scheduler) runFailureChecks() {
 			"lease_expired_at":   task.LeaseExpiresAt,
 		})
 		s.reclaimExpiredTaskLocked(task)
-		reclaimed = true
-	}
-
-	if reclaimed || requeued {
-		s.assignPendingTasks()
 	}
 
 	metricsSnapshot := s.metricsSnapshotLocked()

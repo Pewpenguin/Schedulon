@@ -153,7 +153,6 @@ func (s *Scheduler) RegisterWorker(ctx context.Context, req *pb.RegisterWorkerRe
 
 	s.recordWorkerRegistration()
 	s.updatePersistentStateLocked()
-	s.assignPendingTasks()
 	metricsSnapshot := s.metricsSnapshotLocked()
 	s.mu.Unlock()
 	s.updateMetrics(metricsSnapshot.activeTasks, metricsSnapshot.pendingTasks, metricsSnapshot.activeWorkers)
@@ -417,8 +416,6 @@ func (s *Scheduler) ReportTaskStatus(ctx context.Context, update *pb.TaskStatusU
 			worker.Status = pb.WorkerStatus_IDLE
 			s.recordWorkerStatusChange()
 		}
-
-		s.assignPendingTasks()
 	}
 
 	s.logger.Info("Task status updated", map[string]interface{}{
@@ -545,7 +542,6 @@ func (s *Scheduler) AddTask(task *Task) {
 
 	s.updatePersistentStateLocked()
 
-	s.assignPendingTasks()
 	metricsSnapshot := s.metricsSnapshotLocked()
 	s.mu.Unlock()
 	s.updateMetrics(metricsSnapshot.activeTasks, metricsSnapshot.pendingTasks, metricsSnapshot.activeWorkers)
