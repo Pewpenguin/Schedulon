@@ -25,6 +25,7 @@ type Scheduler struct {
 	taskQueue          *TaskQueue
 	workloadPolicy     WorkloadPolicy
 	leaseDuration      time.Duration
+	workerTimeout      time.Duration
 	metrics            *metrics.SchedulerMetrics
 	logger             *logging.Logger
 	persistenceManager *persistence.Manager
@@ -85,6 +86,7 @@ func NewScheduler(policy WorkloadPolicy) *Scheduler {
 		taskQueue:      NewTaskQueue(),
 		workloadPolicy: policy,
 		leaseDuration:  30 * time.Second,
+		workerTimeout:  60 * time.Second,
 		logger:         logger,
 	}
 }
@@ -133,12 +135,13 @@ func (s *Scheduler) RegisterWorker(ctx context.Context, req *pb.RegisterWorkerRe
 	}
 
 	worker := &Worker{
-		ID:         workerID,
-		GPUs:       len(gpus),
-		GPUDevices: gpus,
-		Address:    req.Address,
-		Status:     pb.WorkerStatus_IDLE,
-		Tasks:      make(map[string]*Task),
+		ID:            workerID,
+		GPUs:          len(gpus),
+		GPUDevices:    gpus,
+		Address:       req.Address,
+		Status:        pb.WorkerStatus_IDLE,
+		Tasks:         make(map[string]*Task),
+		LastHeartbeat: time.Now(),
 	}
 
 	s.workers[workerID] = worker
@@ -272,10 +275,14 @@ func (s *Scheduler) SubmitTask(ctx context.Context, req *pb.SubmitTaskRequest) (
 	if req == nil {
 		return nil, status.Error(codes.InvalidArgument, "submit task request is required")
 	}
-	if strings.TrimSpace(req.Image) == "" {
+	exec := req.GetExec()
+	if exec == nil {
+		return nil, status.Error(codes.InvalidArgument, "exec is required")
+	}
+	if strings.TrimSpace(exec.GetImage()) == "" {
 		return nil, status.Error(codes.InvalidArgument, "image is required")
 	}
-	if len(req.Command) == 0 {
+	if len(exec.GetCommand()) == 0 {
 		return nil, status.Error(codes.InvalidArgument, "command must contain at least one argument")
 	}
 	if req.RequiredGpus <= 0 {
@@ -289,8 +296,8 @@ func (s *Scheduler) SubmitTask(ctx context.Context, req *pb.SubmitTaskRequest) (
 
 	// Keep the original submit payload in configuration for worker execution.
 	configBytes, err := json.Marshal(map[string]interface{}{
-		"image":           req.Image,
-		"command":         req.Command,
+		"image":           exec.GetImage(),
+		"command":         exec.GetCommand(),
 		"priority":        req.Priority,
 		"idempotency_key": req.IdempotencyKey,
 	})
@@ -303,7 +310,7 @@ func (s *Scheduler) SubmitTask(ctx context.Context, req *pb.SubmitTaskRequest) (
 
 	task := &Task{
 		ID:            taskID,
-		Name:          req.Image,
+		Name:          exec.GetImage(),
 		RequiredGPUs:  uint32(req.RequiredGpus),
 		MinGPUMemory:  0,
 		Configuration: configBytes,
@@ -312,7 +319,7 @@ func (s *Scheduler) SubmitTask(ctx context.Context, req *pb.SubmitTaskRequest) (
 
 	s.logger.Info("Received task submission", map[string]interface{}{
 		"task_id":         taskID,
-		"image":           req.Image,
+		"image":           exec.GetImage(),
 		"required_gpus":   req.RequiredGpus,
 		"priority":        req.Priority,
 		"idempotency_key": req.IdempotencyKey,

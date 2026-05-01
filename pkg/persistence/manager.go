@@ -73,6 +73,7 @@ type Manager struct {
 	mu          sync.RWMutex
 	stopCh      chan struct{}
 	saveTrigger chan struct{}
+	saveHandler func() error
 	logger      *logging.Logger
 }
 
@@ -96,6 +97,8 @@ func NewManager(config Config, logger *logging.Logger) (*Manager, error) {
 }
 
 func (m *Manager) Start() {
+	go m.saveConsumerLoop()
+
 	if m.config.AutoSave {
 		go m.autoSaveLoop()
 	}
@@ -132,14 +135,66 @@ func (m *Manager) TriggerSave() {
 	}
 }
 
+func (m *Manager) SetSaveHandler(handler func() error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.saveHandler = handler
+}
+
+func (m *Manager) saveConsumerLoop() {
+	for {
+		select {
+		case <-m.stopCh:
+			m.logger.Info("Persistence save consumer stopped", nil)
+			return
+		case <-m.saveTrigger:
+			m.mu.RLock()
+			handler := m.saveHandler
+			m.mu.RUnlock()
+
+			if handler == nil {
+				m.logger.Warn("Persistence trigger received without save handler", nil)
+				continue
+			}
+
+			m.logger.Info("Processing persistence save trigger", nil)
+			start := time.Now()
+			if err := handler(); err != nil {
+				m.logger.Error("Persistence save trigger failed", map[string]interface{}{
+					"error": err.Error(),
+				})
+				continue
+			}
+
+			m.logger.Info("Persistence save trigger completed", map[string]interface{}{
+				"duration_ms": time.Since(start).Milliseconds(),
+			})
+		}
+	}
+}
+
 func (m *Manager) SaveState(state *SchedulerState) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	state.SavedAt = time.Now().Unix()
+	m.logger.Info("Flushing scheduler state", map[string]interface{}{
+		"workers":       len(state.Workers),
+		"tasks":         len(state.Tasks),
+		"pending_tasks": len(state.PendingTasks),
+		"target":        m.config.Type,
+	})
 
 	if m.config.Type == DatabasePersistence {
-		return m.saveToDatabase(state)
+		if err := m.saveToDatabase(state); err != nil {
+			return err
+		}
+
+		m.logger.Info("Scheduler state flush completed", map[string]interface{}{
+			"target":    m.config.Type,
+			"timestamp": state.SavedAt,
+		})
+		return nil
 	}
 
 	return fmt.Errorf("unsupported persistence type: %s", m.config.Type)

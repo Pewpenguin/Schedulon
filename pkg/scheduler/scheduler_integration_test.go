@@ -18,8 +18,10 @@ func TestSchedulerTaskLifecycle_SubmitPollComplete(t *testing.T) {
 	s := NewScheduler(&noAutoAssignPolicy{})
 
 	submitResp, err := s.SubmitTask(ctx, &pb.SubmitTaskRequest{
-		Image:        "pytorch/pytorch:2.2",
-		Command:      []string{"python", "train.py"},
+		Exec: &pb.ExecutionSpec{
+			Image:   "pytorch/pytorch:2.2",
+			Command: []string{"python", "train.py"},
+		},
 		RequiredGpus: 1,
 		Priority:     1,
 	})

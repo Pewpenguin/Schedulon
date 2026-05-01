@@ -21,6 +21,7 @@ func ValidateTransition(oldState, newState string) error {
 		TaskRunning: {
 			TaskCompleted: true,
 			TaskFailed:    true,
+			TaskPending:   true, // lease reclaim / failure detector
 		},
 	}
 

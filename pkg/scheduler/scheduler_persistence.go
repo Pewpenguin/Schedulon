@@ -18,6 +18,7 @@ func (s *Scheduler) EnablePersistence(config persistence.Config) error {
 	}
 
 	s.persistenceManager = manager
+	manager.SetSaveHandler(s.SaveState)
 
 	manager.Start()
 
@@ -183,12 +184,13 @@ func (s *Scheduler) LoadState() error {
 		}
 
 		worker := &Worker{
-			ID:         id,
-			GPUs:       len(gpus),
-			GPUDevices: gpus,
-			Address:    workerState.Address,
-			Status:     workerState.Status,
-			Tasks:      make(map[string]*Task),
+			ID:            id,
+			GPUs:          len(gpus),
+			GPUDevices:    gpus,
+			Address:       workerState.Address,
+			Status:        workerState.Status,
+			Tasks:         make(map[string]*Task),
+			LastHeartbeat: time.Now(),
 		}
 
 		s.workers[id] = worker
@@ -233,11 +235,59 @@ func (s *Scheduler) LoadState() error {
 		s.taskQueue.Enqueue(task)
 	}
 
+	// After restart, RUNNING tasks have no live worker execution guarantee; reclaim them for reassignment.
+	staleRecovered := s.recoverStaleRunningTasksAfterLoadLocked()
+
 	s.logger.Info("Scheduler state loaded successfully", map[string]interface{}{
-		"workers":       len(s.workers),
-		"tasks":         len(s.tasks),
-		"pending_tasks": s.taskQueue.Len(),
+		"workers":                 len(s.workers),
+		"tasks":                   len(s.tasks),
+		"pending_tasks":           s.taskQueue.Len(),
+		"stale_running_recovered": staleRecovered,
 	})
 
 	return nil
+}
+
+// recoverStaleRunningTasksAfterLoadLocked marks persisted RUNNING tasks as PENDING and enqueues them.
+// Caller must hold s.mu. Detaches tasks from restored workers and frees assigned GPUs.
+func (s *Scheduler) recoverStaleRunningTasksAfterLoadLocked() int {
+	n := 0
+	for id, task := range s.tasks {
+		if task == nil || task.Status != pb.TaskStatus_RUNNING {
+			continue
+		}
+
+		workerID := task.WorkerID
+		if workerID != "" {
+			if w, ok := s.workers[workerID]; ok {
+				delete(w.Tasks, id)
+				for _, gpu := range w.GPUDevices {
+					for _, aid := range task.AssignedGPUs {
+						if gpu.ID == aid {
+							gpu.Available = true
+						}
+					}
+				}
+				if len(w.Tasks) == 0 && w.Status != pb.WorkerStatus_OFFLINE {
+					w.Status = pb.WorkerStatus_IDLE
+				}
+			}
+		}
+
+		s.logger.Info("Recovered stale RUNNING task after restart", map[string]interface{}{
+			"task_id":            id,
+			"previous_worker_id": workerID,
+		})
+
+		s.taskQueue.Requeue(task)
+		n++
+	}
+
+	if n > 0 {
+		s.logger.Info("Restart recovery: requeued stale RUNNING tasks for reassignment", map[string]interface{}{
+			"count": n,
+		})
+	}
+
+	return n
 }

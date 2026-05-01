@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"log"
@@ -54,6 +55,10 @@ func main() {
 
 	schedulerService := scheduler.NewScheduler(policy)
 	schedulerService.SetMetrics(schedulerMetrics)
+
+	detectorCtx, stopFailureDetector := context.WithCancel(context.Background())
+	defer stopFailureDetector()
+	schedulerService.StartFailureDetector(detectorCtx)
 
 	pb.RegisterTrainingSchedulerServer(grpcServer, schedulerService)
 
@@ -130,6 +135,8 @@ func main() {
 	<-sigCh
 
 	logger.Info("Shutting down server", nil)
+
+	stopFailureDetector()
 
 	if *enablePersistence {
 		schedulerService.DisablePersistence()

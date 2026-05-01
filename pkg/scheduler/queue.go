@@ -1,6 +1,11 @@
 package scheduler
 
-import "sync"
+import (
+	"sync"
+	"time"
+
+	pb "github.com/training-scheduler/proto"
+)
 
 type TaskQueue struct {
 	mu      sync.Mutex
@@ -62,6 +67,23 @@ func (q *TaskQueue) Reset() {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	q.pending = make([]*Task, 0)
+}
+
+// Requeue resets a task for scheduling and appends it to the pending queue.
+// Used when a worker is lost or a lease expires; caller must detach the task from workers and GPUs first.
+func (q *TaskQueue) Requeue(task *Task) {
+	if task == nil {
+		return
+	}
+
+	task.Status = pb.TaskStatus_PENDING
+	task.WorkerID = ""
+	task.AssignedGPUs = nil
+	task.LeaseOwner = ""
+	task.LeaseExpiresAt = time.Time{}
+	task.Progress = 0
+
+	q.Enqueue(task)
 }
 
 func isSchedulableForWorker(task *Task, worker *Worker) bool {
