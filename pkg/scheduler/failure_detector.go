@@ -37,6 +37,7 @@ func (s *Scheduler) runFailureChecks() {
 	s.mu.Lock()
 	now := time.Now()
 	workerTO := s.effectiveWorkerTimeout()
+	requeuedTasks := 0
 
 	for id, worker := range s.workers {
 		if worker.Status == pb.WorkerStatus_OFFLINE {
@@ -47,7 +48,7 @@ func (s *Scheduler) runFailureChecks() {
 			continue
 		}
 		if now.Sub(worker.LastHeartbeat) > workerTO {
-			s.requeueTasksForOfflineWorkerLocked(id)
+			requeuedTasks += s.requeueTasksForOfflineWorkerLocked(id)
 			s.logger.Warn("Worker marked offline (heartbeat timeout)", map[string]interface{}{
 				"worker_id":        id,
 				"last_heartbeat":   worker.LastHeartbeat,
@@ -74,7 +75,9 @@ func (s *Scheduler) runFailureChecks() {
 			"previous_worker_id": task.WorkerID,
 			"lease_expired_at":   task.LeaseExpiresAt,
 		})
-		s.reclaimExpiredTaskLocked(task)
+		if s.reclaimExpiredTaskLocked(task) {
+			requeuedTasks++
+		}
 	}
 
 	metricsSnapshot := s.metricsSnapshotLocked()
@@ -82,13 +85,14 @@ func (s *Scheduler) runFailureChecks() {
 	s.mu.Unlock()
 
 	s.updateMetrics(metricsSnapshot.activeTasks, metricsSnapshot.pendingTasks, metricsSnapshot.activeWorkers)
+	s.recordTasksRequeued(requeuedTasks)
 	s.UpdatePersistentState()
 }
 
 // reclaimExpiredTaskLocked moves a RUNNING task back to the pending queue. Caller must hold s.mu.
-func (s *Scheduler) reclaimExpiredTaskLocked(task *Task) {
+func (s *Scheduler) reclaimExpiredTaskLocked(task *Task) bool {
 	if task == nil {
-		return
+		return false
 	}
 
 	workerID := task.WorkerID
@@ -109,14 +113,15 @@ func (s *Scheduler) reclaimExpiredTaskLocked(task *Task) {
 	}
 
 	s.taskQueue.Requeue(task)
+	return true
 }
 
 // requeueTasksForOfflineWorkerLocked releases GPUs and requeues all RUNNING tasks for the worker.
 // Caller must hold s.mu.
-func (s *Scheduler) requeueTasksForOfflineWorkerLocked(workerID string) bool {
+func (s *Scheduler) requeueTasksForOfflineWorkerLocked(workerID string) int {
 	worker := s.workers[workerID]
 	if worker == nil {
-		return false
+		return 0
 	}
 
 	ids := make([]string, 0, len(worker.Tasks))
@@ -124,7 +129,7 @@ func (s *Scheduler) requeueTasksForOfflineWorkerLocked(workerID string) bool {
 		ids = append(ids, id)
 	}
 
-	any := false
+	requeued := 0
 	for _, tid := range ids {
 		task := s.tasks[tid]
 		if task == nil || task.Status != pb.TaskStatus_RUNNING {
@@ -145,8 +150,8 @@ func (s *Scheduler) requeueTasksForOfflineWorkerLocked(workerID string) bool {
 			"worker_id": workerID,
 		})
 		s.taskQueue.Requeue(task)
-		any = true
+		requeued++
 	}
 
-	return any
+	return requeued
 }

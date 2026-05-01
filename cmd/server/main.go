@@ -21,7 +21,6 @@ import (
 func main() {
 	port := flag.Int("port", 50051, "The server port")
 	metricsPort := flag.Int("metrics-port", 9091, "The metrics server port")
-	policyType := flag.String("policy", "balanced", "Workload distribution policy (simple or balanced)")
 	logLevel := flag.String("log-level", "info", "Log level (debug, info, warn, error)")
 	logDir := flag.String("log-dir", "/var/log/scheduler", "Directory for log files")
 
@@ -40,20 +39,10 @@ func main() {
 
 	grpcServer := grpc.NewServer()
 
-	var policy scheduler.WorkloadPolicy
-	switch *policyType {
-	case "simple":
-		policy = scheduler.NewSimpleWorkloadPolicy()
-	case "balanced":
-		policy = scheduler.NewBalancedWorkloadPolicy()
-	default:
-		log.Fatalf("Unknown policy type: %s", *policyType)
-	}
-
 	metricsServer := metrics.NewMetricsServer(fmt.Sprintf(":%d", *metricsPort))
 	schedulerMetrics := metrics.NewSchedulerMetrics()
 
-	schedulerService := scheduler.NewScheduler(policy)
+	schedulerService := scheduler.NewScheduler()
 	schedulerService.SetMetrics(schedulerMetrics)
 
 	detectorCtx, stopFailureDetector := context.WithCancel(context.Background())
@@ -78,7 +67,6 @@ func main() {
 	logger.Info("Starting scheduler server", map[string]interface{}{
 		"port":         *port,
 		"metrics_port": *metricsPort,
-		"policy":       *policyType,
 	})
 
 	logger.Info("Starting metrics server", map[string]interface{}{"port": *metricsPort})
@@ -95,8 +83,8 @@ func main() {
 	}()
 
 	schedulerMetrics.SetActiveTasks(0)
-	schedulerMetrics.SetPendingTasks(0)
-	schedulerMetrics.SetActiveWorkers(0)
+	schedulerMetrics.SetQueueDepth(0)
+	schedulerMetrics.SetSchedulerActiveWorkers(0)
 
 	if *enablePersistence {
 		var persistenceConfig persistence.Config

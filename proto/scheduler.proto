@@ -92,7 +92,7 @@ message TaskRequest {
   string worker_id = 1;
   repeated string available_gpu_ids = 2;
   Task task = 3;
-  map<string, string> priority_info = 4;
+  reserved 4;
 }
 
 message ExecutionSpec {

@@ -13,9 +13,9 @@ import (
 )
 
 var (
-	totalTasks = promauto.NewCounter(prometheus.CounterOpts{
-		Name: "scheduler_tasks_total",
-		Help: "The total number of tasks submitted to the scheduler",
+	schedulerTasksSubmittedTotal = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "scheduler_tasks_submitted_total",
+		Help: "Total number of tasks submitted to the scheduler",
 	})
 
 	activeTasks = promauto.NewGauge(prometheus.GaugeOpts{
@@ -23,19 +23,24 @@ var (
 		Help: "The number of currently active tasks",
 	})
 
-	pendingTasks = promauto.NewGauge(prometheus.GaugeOpts{
-		Name: "scheduler_tasks_pending",
-		Help: "The number of pending tasks waiting for assignment",
+	schedulerTasksCompletedTotal = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "scheduler_tasks_completed_total",
+		Help: "Total number of tasks completed successfully",
 	})
 
-	completedTasks = promauto.NewCounter(prometheus.CounterOpts{
-		Name: "scheduler_tasks_completed",
-		Help: "The total number of completed tasks",
+	schedulerTasksFailedTotal = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "scheduler_tasks_failed_total",
+		Help: "Total number of tasks that failed",
 	})
 
-	failedTasks = promauto.NewCounter(prometheus.CounterOpts{
-		Name: "scheduler_tasks_failed",
-		Help: "The total number of failed tasks",
+	schedulerTasksRequeuedTotal = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "scheduler_tasks_requeued_total",
+		Help: "Total number of tasks requeued by recovery logic",
+	})
+
+	schedulerWorkerHeartbeatTotal = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "scheduler_worker_heartbeat_total",
+		Help: "Total number of worker heartbeats accepted by scheduler",
 	})
 
 	taskDuration = promauto.NewHistogramVec(
@@ -47,9 +52,14 @@ var (
 		[]string{"task_name"},
 	)
 
-	activeWorkers = promauto.NewGauge(prometheus.GaugeOpts{
-		Name: "scheduler_workers_active",
-		Help: "The number of active workers",
+	schedulerQueueDepth = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "scheduler_queue_depth",
+		Help: "Current number of tasks in scheduler queue",
+	})
+
+	schedulerActiveWorkers = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "scheduler_active_workers",
+		Help: "Current number of registered workers",
 	})
 
 	workerGPUUtilization = promauto.NewGaugeVec(
@@ -118,32 +128,47 @@ func NewSchedulerMetrics() *SchedulerMetrics {
 	return &SchedulerMetrics{}
 }
 
-func (sm *SchedulerMetrics) IncrementTotalTasks() {
-	totalTasks.Inc()
+func (sm *SchedulerMetrics) IncrementTasksSubmitted() {
+	schedulerTasksSubmittedTotal.Inc()
 }
 
 func (sm *SchedulerMetrics) SetActiveTasks(count int) {
 	activeTasks.Set(float64(count))
 }
 
-func (sm *SchedulerMetrics) SetPendingTasks(count int) {
-	pendingTasks.Set(float64(count))
+func (sm *SchedulerMetrics) IncrementTasksCompleted() {
+	schedulerTasksCompletedTotal.Inc()
 }
 
-func (sm *SchedulerMetrics) IncrementCompletedTasks() {
-	completedTasks.Inc()
+func (sm *SchedulerMetrics) IncrementTasksFailed() {
+	schedulerTasksFailedTotal.Inc()
 }
 
-func (sm *SchedulerMetrics) IncrementFailedTasks() {
-	failedTasks.Inc()
+func (sm *SchedulerMetrics) IncrementTasksRequeued() {
+	schedulerTasksRequeuedTotal.Inc()
+}
+
+func (sm *SchedulerMetrics) AddTasksRequeued(n int) {
+	if n <= 0 {
+		return
+	}
+	schedulerTasksRequeuedTotal.Add(float64(n))
+}
+
+func (sm *SchedulerMetrics) IncrementWorkerHeartbeat() {
+	schedulerWorkerHeartbeatTotal.Inc()
 }
 
 func (sm *SchedulerMetrics) ObserveTaskDuration(taskName string, durationSeconds float64) {
 	taskDuration.WithLabelValues(taskName).Observe(durationSeconds)
 }
 
-func (sm *SchedulerMetrics) SetActiveWorkers(count int) {
-	activeWorkers.Set(float64(count))
+func (sm *SchedulerMetrics) SetQueueDepth(count int) {
+	schedulerQueueDepth.Set(float64(count))
+}
+
+func (sm *SchedulerMetrics) SetSchedulerActiveWorkers(count int) {
+	schedulerActiveWorkers.Set(float64(count))
 }
 
 type WorkerMetrics struct {

@@ -497,7 +497,6 @@ type TaskRequest struct {
 	WorkerId        string                 `protobuf:"bytes,1,opt,name=worker_id,json=workerId,proto3" json:"worker_id,omitempty"`
 	AvailableGpuIds []string               `protobuf:"bytes,2,rep,name=available_gpu_ids,json=availableGpuIds,proto3" json:"available_gpu_ids,omitempty"`
 	Task            *Task                  `protobuf:"bytes,3,opt,name=task,proto3" json:"task,omitempty"`
-	PriorityInfo    map[string]string      `protobuf:"bytes,4,rep,name=priority_info,json=priorityInfo,proto3" json:"priority_info,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	unknownFields   protoimpl.UnknownFields
 	sizeCache       protoimpl.SizeCache
 }
@@ -549,13 +548,6 @@ func (x *TaskRequest) GetAvailableGpuIds() []string {
 func (x *TaskRequest) GetTask() *Task {
 	if x != nil {
 		return x.Task
-	}
-	return nil
-}
-
-func (x *TaskRequest) GetPriorityInfo() map[string]string {
-	if x != nil {
-		return x.PriorityInfo
 	}
 	return nil
 }
@@ -1506,15 +1498,11 @@ const file_proto_scheduler_proto_rawDesc = "" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x18\n" +
 	"\amessage\x18\x02 \x01(\tR\amessage\x12\x1f\n" +
 	"\vassigned_id\x18\x03 \x01(\tR\n" +
-	"assignedId\"\x8b\x02\n" +
+	"assignedId\"\x81\x01\n" +
 	"\vTaskRequest\x12\x1b\n" +
 	"\tworker_id\x18\x01 \x01(\tR\bworkerId\x12*\n" +
 	"\x11available_gpu_ids\x18\x02 \x03(\tR\x0favailableGpuIds\x12#\n" +
-	"\x04task\x18\x03 \x01(\v2\x0f.scheduler.TaskR\x04task\x12M\n" +
-	"\rpriority_info\x18\x04 \x03(\v2(.scheduler.TaskRequest.PriorityInfoEntryR\fpriorityInfo\x1a?\n" +
-	"\x11PriorityInfoEntry\x12\x10\n" +
-	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xaf\x02\n" +
+	"\x04task\x18\x03 \x01(\v2\x0f.scheduler.TaskR\x04taskJ\x04\b\x04\x10\x05\"\xaf\x02\n" +
 	"\rExecutionSpec\x12\x14\n" +
 	"\x05image\x18\x01 \x01(\tR\x05image\x12\x18\n" +
 	"\acommand\x18\x02 \x03(\tR\acommand\x12\x12\n" +
@@ -1619,7 +1607,7 @@ func file_proto_scheduler_proto_rawDescGZIP() []byte {
 }
 
 var file_proto_scheduler_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_proto_scheduler_proto_msgTypes = make([]protoimpl.MessageInfo, 24)
+var file_proto_scheduler_proto_msgTypes = make([]protoimpl.MessageInfo, 23)
 var file_proto_scheduler_proto_goTypes = []any{
 	(WorkerStatus)(0),              // 0: scheduler.WorkerStatus
 	(TaskStatus)(0),                // 1: scheduler.TaskStatus
@@ -1644,9 +1632,8 @@ var file_proto_scheduler_proto_goTypes = []any{
 	(*TaskSummary)(nil),            // 20: scheduler.TaskSummary
 	(*HeartbeatRequest)(nil),       // 21: scheduler.HeartbeatRequest
 	(*HeartbeatResponse)(nil),      // 22: scheduler.HeartbeatResponse
-	nil,                            // 23: scheduler.TaskRequest.PriorityInfoEntry
-	nil,                            // 24: scheduler.ExecutionSpec.EnvEntry
-	nil,                            // 25: scheduler.WorkerCommand.ParamsEntry
+	nil,                            // 23: scheduler.ExecutionSpec.EnvEntry
+	nil,                            // 24: scheduler.WorkerCommand.ParamsEntry
 }
 var file_proto_scheduler_proto_depIdxs = []int32{
 	3,  // 0: scheduler.Worker.gpus:type_name -> scheduler.GPU
@@ -1654,38 +1641,37 @@ var file_proto_scheduler_proto_depIdxs = []int32{
 	1,  // 2: scheduler.Task.status:type_name -> scheduler.TaskStatus
 	3,  // 3: scheduler.RegisterWorkerRequest.gpus:type_name -> scheduler.GPU
 	4,  // 4: scheduler.TaskRequest.task:type_name -> scheduler.Task
-	23, // 5: scheduler.TaskRequest.priority_info:type_name -> scheduler.TaskRequest.PriorityInfoEntry
-	24, // 6: scheduler.ExecutionSpec.env:type_name -> scheduler.ExecutionSpec.EnvEntry
-	8,  // 7: scheduler.SubmitTaskRequest.exec:type_name -> scheduler.ExecutionSpec
-	1,  // 8: scheduler.TaskStatusUpdate.status:type_name -> scheduler.TaskStatus
-	12, // 9: scheduler.TaskStatusUpdate.metrics:type_name -> scheduler.Metric
-	0,  // 10: scheduler.WorkerStatusResponse.status:type_name -> scheduler.WorkerStatus
-	3,  // 11: scheduler.WorkerStatusResponse.gpus:type_name -> scheduler.GPU
-	20, // 12: scheduler.WorkerStatusResponse.active_tasks:type_name -> scheduler.TaskSummary
-	16, // 13: scheduler.WorkerStatusResponse.command:type_name -> scheduler.WorkerCommand
-	25, // 14: scheduler.WorkerCommand.params:type_name -> scheduler.WorkerCommand.ParamsEntry
-	19, // 15: scheduler.ListWorkersResponse.workers:type_name -> scheduler.WorkerInfo
-	0,  // 16: scheduler.WorkerInfo.status:type_name -> scheduler.WorkerStatus
-	1,  // 17: scheduler.TaskSummary.status:type_name -> scheduler.TaskStatus
-	5,  // 18: scheduler.TrainingScheduler.RegisterWorker:input_type -> scheduler.RegisterWorkerRequest
-	9,  // 19: scheduler.TrainingScheduler.SubmitTask:input_type -> scheduler.SubmitTaskRequest
-	7,  // 20: scheduler.TrainingScheduler.RequestTask:input_type -> scheduler.TaskRequest
-	11, // 21: scheduler.TrainingScheduler.ReportTaskStatus:input_type -> scheduler.TaskStatusUpdate
-	14, // 22: scheduler.TrainingScheduler.MonitorWorker:input_type -> scheduler.WorkerStatusRequest
-	17, // 23: scheduler.TrainingScheduler.ListWorkers:input_type -> scheduler.ListWorkersRequest
-	21, // 24: scheduler.TrainingScheduler.Heartbeat:input_type -> scheduler.HeartbeatRequest
-	6,  // 25: scheduler.TrainingScheduler.RegisterWorker:output_type -> scheduler.RegisterWorkerResponse
-	10, // 26: scheduler.TrainingScheduler.SubmitTask:output_type -> scheduler.SubmitTaskResponse
-	4,  // 27: scheduler.TrainingScheduler.RequestTask:output_type -> scheduler.Task
-	13, // 28: scheduler.TrainingScheduler.ReportTaskStatus:output_type -> scheduler.TaskStatusResponse
-	15, // 29: scheduler.TrainingScheduler.MonitorWorker:output_type -> scheduler.WorkerStatusResponse
-	18, // 30: scheduler.TrainingScheduler.ListWorkers:output_type -> scheduler.ListWorkersResponse
-	22, // 31: scheduler.TrainingScheduler.Heartbeat:output_type -> scheduler.HeartbeatResponse
-	25, // [25:32] is the sub-list for method output_type
-	18, // [18:25] is the sub-list for method input_type
-	18, // [18:18] is the sub-list for extension type_name
-	18, // [18:18] is the sub-list for extension extendee
-	0,  // [0:18] is the sub-list for field type_name
+	23, // 5: scheduler.ExecutionSpec.env:type_name -> scheduler.ExecutionSpec.EnvEntry
+	8,  // 6: scheduler.SubmitTaskRequest.exec:type_name -> scheduler.ExecutionSpec
+	1,  // 7: scheduler.TaskStatusUpdate.status:type_name -> scheduler.TaskStatus
+	12, // 8: scheduler.TaskStatusUpdate.metrics:type_name -> scheduler.Metric
+	0,  // 9: scheduler.WorkerStatusResponse.status:type_name -> scheduler.WorkerStatus
+	3,  // 10: scheduler.WorkerStatusResponse.gpus:type_name -> scheduler.GPU
+	20, // 11: scheduler.WorkerStatusResponse.active_tasks:type_name -> scheduler.TaskSummary
+	16, // 12: scheduler.WorkerStatusResponse.command:type_name -> scheduler.WorkerCommand
+	24, // 13: scheduler.WorkerCommand.params:type_name -> scheduler.WorkerCommand.ParamsEntry
+	19, // 14: scheduler.ListWorkersResponse.workers:type_name -> scheduler.WorkerInfo
+	0,  // 15: scheduler.WorkerInfo.status:type_name -> scheduler.WorkerStatus
+	1,  // 16: scheduler.TaskSummary.status:type_name -> scheduler.TaskStatus
+	5,  // 17: scheduler.TrainingScheduler.RegisterWorker:input_type -> scheduler.RegisterWorkerRequest
+	9,  // 18: scheduler.TrainingScheduler.SubmitTask:input_type -> scheduler.SubmitTaskRequest
+	7,  // 19: scheduler.TrainingScheduler.RequestTask:input_type -> scheduler.TaskRequest
+	11, // 20: scheduler.TrainingScheduler.ReportTaskStatus:input_type -> scheduler.TaskStatusUpdate
+	14, // 21: scheduler.TrainingScheduler.MonitorWorker:input_type -> scheduler.WorkerStatusRequest
+	17, // 22: scheduler.TrainingScheduler.ListWorkers:input_type -> scheduler.ListWorkersRequest
+	21, // 23: scheduler.TrainingScheduler.Heartbeat:input_type -> scheduler.HeartbeatRequest
+	6,  // 24: scheduler.TrainingScheduler.RegisterWorker:output_type -> scheduler.RegisterWorkerResponse
+	10, // 25: scheduler.TrainingScheduler.SubmitTask:output_type -> scheduler.SubmitTaskResponse
+	4,  // 26: scheduler.TrainingScheduler.RequestTask:output_type -> scheduler.Task
+	13, // 27: scheduler.TrainingScheduler.ReportTaskStatus:output_type -> scheduler.TaskStatusResponse
+	15, // 28: scheduler.TrainingScheduler.MonitorWorker:output_type -> scheduler.WorkerStatusResponse
+	18, // 29: scheduler.TrainingScheduler.ListWorkers:output_type -> scheduler.ListWorkersResponse
+	22, // 30: scheduler.TrainingScheduler.Heartbeat:output_type -> scheduler.HeartbeatResponse
+	24, // [24:31] is the sub-list for method output_type
+	17, // [17:24] is the sub-list for method input_type
+	17, // [17:17] is the sub-list for extension type_name
+	17, // [17:17] is the sub-list for extension extendee
+	0,  // [0:17] is the sub-list for field type_name
 }
 
 func init() { file_proto_scheduler_proto_init() }
@@ -1699,7 +1685,7 @@ func file_proto_scheduler_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_scheduler_proto_rawDesc), len(file_proto_scheduler_proto_rawDesc)),
 			NumEnums:      2,
-			NumMessages:   24,
+			NumMessages:   23,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

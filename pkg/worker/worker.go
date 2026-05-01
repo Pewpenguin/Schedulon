@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -28,15 +27,14 @@ type Worker struct {
 	mu          sync.RWMutex
 	Paused      bool
 
-	MetricFrequency time.Duration
+	MetricFrequency   time.Duration
 	HeartbeatInterval time.Duration
-	TaskPriority    map[string]int
-	GPUAllocation   string
-	metrics         *metrics.WorkerMetrics
-	logger          *logging.Logger
-	runCtx          context.Context
-	runCancel       context.CancelFunc
-	stopOnce        sync.Once
+	GPUAllocation     string
+	metrics           *metrics.WorkerMetrics
+	logger            *logging.Logger
+	runCtx            context.Context
+	runCancel         context.CancelFunc
+	stopOnce          sync.Once
 }
 
 type Task struct {
@@ -75,17 +73,16 @@ func NewWorker(schedulerAddr string, gpus []*pb.GPU) (*Worker, error) {
 	}
 
 	return &Worker{
-		Address:         schedulerAddr,
-		GPUs:            gpus,
-		Status:          pb.WorkerStatus_IDLE,
-		Client:          client,
-		Conn:            conn,
-		ActiveTasks:     make(map[string]*Task),
-		MetricFrequency: 2 * time.Second,
+		Address:           schedulerAddr,
+		GPUs:              gpus,
+		Status:            pb.WorkerStatus_IDLE,
+		Client:            client,
+		Conn:              conn,
+		ActiveTasks:       make(map[string]*Task),
+		MetricFrequency:   2 * time.Second,
 		HeartbeatInterval: 10 * time.Second,
-		TaskPriority:    make(map[string]int),
-		GPUAllocation:   "packed",
-		logger:          logger,
+		GPUAllocation:     "packed",
+		logger:            logger,
 	}, nil
 }
 
@@ -210,7 +207,6 @@ func (w *Worker) pollForTasks(ctx context.Context) {
 				}
 			}
 
-			taskPriorities := w.TaskPriority
 			w.mu.RUnlock()
 
 			if len(availableGPUIDs) == 0 {
@@ -223,26 +219,10 @@ func (w *Worker) pollForTasks(ctx context.Context) {
 				AvailableGpuIds: availableGPUIDs,
 			}
 
-			if len(taskPriorities) > 0 {
-				priorityInfo := make(map[string]string)
-				for taskType, priority := range taskPriorities {
-					priorityInfo[taskType] = fmt.Sprintf("%d", priority)
-				}
-
-				req.PriorityInfo = priorityInfo
-			}
-
 			task, err := w.Client.RequestTask(ctx, req)
 			if err != nil {
 				time.Sleep(5 * time.Second)
 				continue
-			}
-
-			if priority, exists := taskPriorities[task.Name]; exists {
-				w.logger.Info("Task priority identified", map[string]interface{}{
-					"task_name": task.Name,
-					"priority":  priority,
-				})
 			}
 
 			w.executeTask(ctx, task)
@@ -353,7 +333,7 @@ func (w *Worker) reportTaskStatus(ctx context.Context, task *Task) {
 			task.LogPath,
 			task.ArtifactPath,
 		),
-		Metrics:  task.Metrics,
+		Metrics: task.Metrics,
 	}
 	w.mu.RUnlock()
 
@@ -522,11 +502,6 @@ func (w *Worker) handleCommand(ctx context.Context, command *pb.WorkerCommand) {
 			if metricFreq, exists := command.Params["metric_frequency"]; exists {
 				w.logger.Info("Updating metric collection frequency", map[string]interface{}{"frequency": metricFreq})
 				w.updateMetricFrequency(metricFreq)
-			}
-
-			if taskPriority, exists := command.Params["task_priority"]; exists {
-				w.logger.Info("Updating task priority settings", map[string]interface{}{"priority_settings": taskPriority})
-				w.updateTaskPrioritySettings(taskPriority)
 			}
 
 			if gpuAllocation, exists := command.Params["gpu_allocation"]; exists {
@@ -776,36 +751,6 @@ func (w *Worker) updateHeartbeatInterval(intervalStr string) {
 
 	w.HeartbeatInterval = interval
 	w.logger.Info("Heartbeat interval updated", map[string]interface{}{"interval": interval.String()})
-}
-
-func (w *Worker) updateTaskPrioritySettings(priorityStr string) {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-
-	priorities := make(map[string]int)
-	for _, pair := range strings.Split(priorityStr, ",") {
-		parts := strings.Split(pair, "=")
-		if len(parts) != 2 {
-			continue
-		}
-
-		taskType := strings.TrimSpace(parts[0])
-		priority, err := strconv.Atoi(strings.TrimSpace(parts[1]))
-		if err != nil {
-			w.logger.Error("Invalid priority value", map[string]interface{}{
-				"task_type": taskType,
-				"error":     err.Error(),
-			})
-			continue
-		}
-
-		priorities[taskType] = priority
-	}
-
-	if len(priorities) > 0 {
-		w.logger.Info("Setting task priorities", map[string]interface{}{"priorities": priorities})
-		w.TaskPriority = priorities
-	}
 }
 
 func (w *Worker) updateGPUAllocationStrategy(strategy string) {

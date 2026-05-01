@@ -24,7 +24,6 @@ type Scheduler struct {
 	tasks              map[string]*Task
 	idempotencyIndex   map[string]string
 	taskQueue          *TaskQueue
-	workloadPolicy     WorkloadPolicy
 	leaseDuration      time.Duration
 	workerTimeout      time.Duration
 	metrics            *metrics.SchedulerMetrics
@@ -66,11 +65,7 @@ type Task struct {
 	LeaseExpiresAt time.Time
 }
 
-type WorkloadPolicy interface {
-	AssignTask(workers map[string]*Worker, task *Task) (string, []string, error)
-}
-
-func NewScheduler(policy WorkloadPolicy) *Scheduler {
+func NewScheduler() *Scheduler {
 	// Create default logger
 	loggerConfig := logging.Config{
 		Level:     logging.InfoLevel,
@@ -86,7 +81,6 @@ func NewScheduler(policy WorkloadPolicy) *Scheduler {
 		tasks:            make(map[string]*Task),
 		idempotencyIndex: make(map[string]string),
 		taskQueue:        NewTaskQueue(),
-		workloadPolicy:   policy,
 		leaseDuration:    30 * time.Second,
 		workerTimeout:    60 * time.Second,
 		logger:           logger,
@@ -478,10 +472,10 @@ func (s *Scheduler) Heartbeat(ctx context.Context, req *pb.HeartbeatRequest) (*p
 	}
 
 	s.mu.Lock()
-	defer s.mu.Unlock()
 
 	worker, exists := s.workers[workerID]
 	if !exists {
+		s.mu.Unlock()
 		return nil, status.Errorf(codes.NotFound, "unknown worker: %s", workerID)
 	}
 
@@ -500,6 +494,8 @@ func (s *Scheduler) Heartbeat(ctx context.Context, req *pb.HeartbeatRequest) (*p
 		"running_tasks":  worker.RunningTasks,
 		"last_heartbeat": now,
 	})
+	s.mu.Unlock()
+	s.recordWorkerHeartbeat()
 
 	return &pb.HeartbeatResponse{Ok: true}, nil
 }
@@ -563,6 +559,8 @@ func (s *Scheduler) MonitorWorker(req *pb.WorkerStatusRequest, stream pb.Trainin
 func (s *Scheduler) AddTask(task *Task) {
 	s.mu.Lock()
 
+	// Pull-only scheduling architecture:
+	// SubmitTask -> queue.Enqueue -> worker RequestTask -> queue.Dequeue(worker).
 	s.tasks[task.ID] = task
 	s.taskQueue.Enqueue(task)
 
@@ -577,61 +575,6 @@ func (s *Scheduler) AddTask(task *Task) {
 	metricsSnapshot := s.metricsSnapshotLocked()
 	s.mu.Unlock()
 	s.updateMetrics(metricsSnapshot.activeTasks, metricsSnapshot.pendingTasks, metricsSnapshot.activeWorkers)
-}
-
-func (s *Scheduler) assignPendingTasks() {
-	tasksAssigned := false
-
-	pendingCount := s.taskQueue.Len()
-	for i := 0; i < pendingCount; i++ {
-		task := s.taskQueue.Dequeue(nil)
-		if task == nil {
-			break
-		}
-
-		workerID, gpuIDs, err := s.workloadPolicy.AssignTask(s.workers, task)
-		if err != nil {
-			s.taskQueue.Enqueue(task)
-			continue
-		}
-
-		if err := ValidateTransition(task.Status.String(), pb.TaskStatus_RUNNING.String()); err != nil {
-			s.taskQueue.Enqueue(task)
-			s.logger.Warn("Skipped task assignment due to invalid state transition", map[string]interface{}{
-				"task_id": task.ID,
-				"error":   err.Error(),
-			})
-			continue
-		}
-		task.Status = pb.TaskStatus_RUNNING
-		task.WorkerID = workerID
-		task.AssignedGPUs = gpuIDs
-		task.StartTime = time.Now()
-		s.grantLeaseLocked(task, workerID)
-
-		worker := s.workers[workerID]
-		worker.Status = pb.WorkerStatus_BUSY
-		worker.Tasks[task.ID] = task
-
-		for _, gpu := range worker.GPUDevices {
-			for _, id := range gpuIDs {
-				if gpu.ID == id {
-					gpu.Available = false
-				}
-			}
-		}
-
-		s.logger.Info("Task assigned to worker", map[string]interface{}{
-			"task_id":   task.ID,
-			"worker_id": workerID,
-		})
-
-		tasksAssigned = true
-	}
-
-	if tasksAssigned {
-		s.updatePersistentStateLocked()
-	}
 }
 
 func (s *Scheduler) ListWorkers(ctx context.Context, req *pb.ListWorkersRequest) (*pb.ListWorkersResponse, error) {

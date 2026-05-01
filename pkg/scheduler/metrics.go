@@ -46,8 +46,8 @@ func (s *Scheduler) updateMetrics(activeTasks, pendingTasks, activeWorkers int) 
 	}
 
 	s.metrics.SetActiveTasks(activeTasks)
-	s.metrics.SetPendingTasks(pendingTasks)
-	s.metrics.SetActiveWorkers(activeWorkers)
+	s.metrics.SetQueueDepth(pendingTasks)
+	s.metrics.SetSchedulerActiveWorkers(activeWorkers)
 }
 
 func (s *Scheduler) recordTaskSubmission() {
@@ -55,7 +55,7 @@ func (s *Scheduler) recordTaskSubmission() {
 		return
 	}
 
-	s.metrics.IncrementTotalTasks()
+	s.metrics.IncrementTasksSubmitted()
 }
 
 func (s *Scheduler) recordTaskCompletion(task *Task) {
@@ -67,9 +67,9 @@ func (s *Scheduler) recordTaskCompletion(task *Task) {
 	s.metrics.ObserveTaskDuration(task.Name, duration)
 
 	if task.Status == pb.TaskStatus_COMPLETED {
-		s.metrics.IncrementCompletedTasks()
+		s.metrics.IncrementTasksCompleted()
 	} else if task.Status == pb.TaskStatus_FAILED {
-		s.metrics.IncrementFailedTasks()
+		s.metrics.IncrementTasksFailed()
 	}
 }
 
@@ -83,4 +83,25 @@ func (s *Scheduler) recordWorkerStatusChange() {
 	if s.metrics == nil {
 		return
 	}
+}
+
+func (s *Scheduler) recordTaskRequeued() {
+	if s.metrics == nil {
+		return
+	}
+	s.metrics.IncrementTasksRequeued()
+}
+
+func (s *Scheduler) recordTasksRequeued(count int) {
+	if s.metrics == nil || count <= 0 {
+		return
+	}
+	s.metrics.AddTasksRequeued(count)
+}
+
+func (s *Scheduler) recordWorkerHeartbeat() {
+	if s.metrics == nil {
+		return
+	}
+	s.metrics.IncrementWorkerHeartbeat()
 }

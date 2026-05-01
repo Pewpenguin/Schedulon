@@ -13,7 +13,7 @@ import (
 // complete it. Lifecycle: PENDING → RUNNING → PENDING → RUNNING → COMPLETED.
 func TestWorkerFailure_LeaseExpiryReassignsAndCompletes(t *testing.T) {
 	ctx := context.Background()
-	s := NewScheduler(&noAutoAssignPolicy{})
+	s := NewScheduler()
 
 	// Short lease so tests finish quickly; long worker heartbeat timeout so reclaim is lease-driven.
 	s.leaseDuration = 40 * time.Millisecond

@@ -124,25 +124,17 @@ Training tasks can be configured using JSON files. For container-based execution
 }
 ```
 
-## Workload Distribution Policies
+## Pull-Based Scheduling
 
-The scheduler supports two workload distribution policies:
+The scheduler uses a pull-based assignment model:
 
-1. **Simple Policy**: Assigns tasks to workers based on GPU availability and memory requirements, optimizing for minimal resource waste.
-
-2. **Balanced Policy**: Distributes tasks across workers to balance the load, considering the number of active tasks and available GPUs on each worker.
+1. Client submits a task via `SubmitTask`.
+2. Scheduler validates and enqueues the task as `PENDING`.
+3. Worker polls `RequestTask` with currently available GPU IDs.
+4. Scheduler dequeues a compatible task and transitions it to `RUNNING`.
+5. Worker executes and reports completion/failure via `ReportTaskStatus`.
 
 ## Extending the System
-
-### Adding Custom Workload Policies
-
-To implement a custom workload distribution policy, create a new type that implements the `WorkloadPolicy` interface in `pkg/scheduler/policy.go`:
-
-```go
-type WorkloadPolicy interface {
-    AssignTask(workers map[string]*Worker, task *Task) (string, []string, error)
-}
-```
 
 ### Implementing Real Training Tasks
 

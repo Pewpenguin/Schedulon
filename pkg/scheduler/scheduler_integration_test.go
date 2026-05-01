@@ -7,15 +7,9 @@ import (
 	pb "github.com/training-scheduler/proto"
 )
 
-type noAutoAssignPolicy struct{}
-
-func (p *noAutoAssignPolicy) AssignTask(workers map[string]*Worker, task *Task) (string, []string, error) {
-	return "", nil, context.DeadlineExceeded
-}
-
 func TestSchedulerTaskLifecycle_SubmitPollComplete(t *testing.T) {
 	ctx := context.Background()
-	s := NewScheduler(&noAutoAssignPolicy{})
+	s := NewScheduler()
 
 	submitResp, err := s.SubmitTask(ctx, &pb.SubmitTaskRequest{
 		Exec: &pb.ExecutionSpec{
