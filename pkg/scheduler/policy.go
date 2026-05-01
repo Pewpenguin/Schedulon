@@ -28,7 +28,7 @@ func (p *SimpleWorkloadPolicy) AssignTask(workers map[string]*Worker, task *Task
 		}
 
 		var availableGPUs []string
-		for _, gpu := range worker.GPUs {
+		for _, gpu := range worker.GPUDevices {
 			if gpu.Available && gpu.MemoryMB >= task.MinGPUMemory {
 				availableGPUs = append(availableGPUs, gpu.ID)
 			}
@@ -36,7 +36,7 @@ func (p *SimpleWorkloadPolicy) AssignTask(workers map[string]*Worker, task *Task
 
 		if uint32(len(availableGPUs)) >= task.RequiredGPUs {
 			totalMemory := uint64(0)
-			for _, gpu := range worker.GPUs {
+			for _, gpu := range worker.GPUDevices {
 				if gpu.Available {
 					totalMemory += gpu.MemoryMB
 				}
@@ -90,7 +90,7 @@ func (p *BalancedWorkloadPolicy) AssignTask(workers map[string]*Worker, task *Ta
 		}
 
 		var availableGPUs []string
-		for _, gpu := range worker.GPUs {
+		for _, gpu := range worker.GPUDevices {
 			if gpu.Available && gpu.MemoryMB >= task.MinGPUMemory {
 				availableGPUs = append(availableGPUs, gpu.ID)
 			}
@@ -98,7 +98,7 @@ func (p *BalancedWorkloadPolicy) AssignTask(workers map[string]*Worker, task *Ta
 
 		if uint32(len(availableGPUs)) >= task.RequiredGPUs {
 			taskCount := len(worker.Tasks)
-			totalGPUs := len(worker.GPUs)
+			totalGPUs := worker.GPUs
 
 			loadFactor := float64(taskCount) / float64(totalGPUs)
 			availabilityFactor := float64(len(availableGPUs)) / float64(totalGPUs)

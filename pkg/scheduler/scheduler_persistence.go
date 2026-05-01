@@ -66,8 +66,8 @@ func (s *Scheduler) SaveState() error {
 	}
 
 	for id, worker := range s.workers {
-		gpuStates := make([]*persistence.GPUState, 0, len(worker.GPUs))
-		for _, gpu := range worker.GPUs {
+		gpuStates := make([]*persistence.GPUState, 0, len(worker.GPUDevices))
+		for _, gpu := range worker.GPUDevices {
 			gpuStates = append(gpuStates, &persistence.GPUState{
 				ID:        gpu.ID,
 				Model:     gpu.Model,
@@ -183,11 +183,12 @@ func (s *Scheduler) LoadState() error {
 		}
 
 		worker := &Worker{
-			ID:      id,
-			GPUs:    gpus,
-			Address: workerState.Address,
-			Status:  workerState.Status,
-			Tasks:   make(map[string]*Task),
+			ID:         id,
+			GPUs:       len(gpus),
+			GPUDevices: gpus,
+			Address:    workerState.Address,
+			Status:     workerState.Status,
+			Tasks:      make(map[string]*Task),
 		}
 
 		s.workers[id] = worker

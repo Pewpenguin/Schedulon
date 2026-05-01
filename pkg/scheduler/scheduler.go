@@ -24,17 +24,21 @@ type Scheduler struct {
 	tasks              map[string]*Task
 	taskQueue          *TaskQueue
 	workloadPolicy     WorkloadPolicy
+	leaseDuration      time.Duration
 	metrics            *metrics.SchedulerMetrics
 	logger             *logging.Logger
 	persistenceManager *persistence.Manager
 }
 
 type Worker struct {
-	ID      string
-	GPUs    []*GPU
-	Address string
-	Status  pb.WorkerStatus
-	Tasks   map[string]*Task
+	ID            string
+	GPUs          int
+	GPUDevices    []*GPU
+	Address       string
+	Status        pb.WorkerStatus
+	Tasks         map[string]*Task
+	LastHeartbeat time.Time
+	RunningTasks  int
 }
 
 type GPU struct {
@@ -45,17 +49,19 @@ type GPU struct {
 }
 
 type Task struct {
-	ID            string
-	Name          string
-	RequiredGPUs  uint32
-	MinGPUMemory  uint64
-	Configuration []byte
-	Status        pb.TaskStatus
-	WorkerID      string
-	AssignedGPUs  []string
-	StartTime     time.Time
-	Progress      float32
-	Metrics       []*pb.Metric
+	ID             string
+	Name           string
+	RequiredGPUs   uint32
+	MinGPUMemory   uint64
+	Configuration  []byte
+	Status         pb.TaskStatus
+	WorkerID       string
+	AssignedGPUs   []string
+	StartTime      time.Time
+	Progress       float32
+	Metrics        []*pb.Metric
+	LeaseOwner     string
+	LeaseExpiresAt time.Time
 }
 
 type WorkloadPolicy interface {
@@ -78,8 +84,25 @@ func NewScheduler(policy WorkloadPolicy) *Scheduler {
 		tasks:          make(map[string]*Task),
 		taskQueue:      NewTaskQueue(),
 		workloadPolicy: policy,
+		leaseDuration:  30 * time.Second,
 		logger:         logger,
 	}
+}
+
+func (s *Scheduler) effectiveLeaseDuration() time.Duration {
+	if s != nil && s.leaseDuration > 0 {
+		return s.leaseDuration
+	}
+	return 30 * time.Second
+}
+
+// grantLeaseLocked sets lease ownership and expiry. Caller must hold s.mu.
+func (s *Scheduler) grantLeaseLocked(task *Task, workerID string) {
+	if task == nil || workerID == "" {
+		return
+	}
+	task.LeaseOwner = workerID
+	task.LeaseExpiresAt = time.Now().Add(s.effectiveLeaseDuration())
 }
 
 func (s *Scheduler) RegisterWorker(ctx context.Context, req *pb.RegisterWorkerRequest) (*pb.RegisterWorkerResponse, error) {
@@ -110,11 +133,12 @@ func (s *Scheduler) RegisterWorker(ctx context.Context, req *pb.RegisterWorkerRe
 	}
 
 	worker := &Worker{
-		ID:      workerID,
-		GPUs:    gpus,
-		Address: req.Address,
-		Status:  pb.WorkerStatus_IDLE,
-		Tasks:   make(map[string]*Task),
+		ID:         workerID,
+		GPUs:       len(gpus),
+		GPUDevices: gpus,
+		Address:    req.Address,
+		Status:     pb.WorkerStatus_IDLE,
+		Tasks:      make(map[string]*Task),
 	}
 
 	s.workers[workerID] = worker
@@ -163,7 +187,7 @@ func (s *Scheduler) RequestTask(ctx context.Context, req *pb.TaskRequest) (*pb.T
 		for _, gpuID := range req.AvailableGpuIds {
 			availableByID[gpuID] = struct{}{}
 		}
-		for _, gpu := range worker.GPUs {
+		for _, gpu := range worker.GPUDevices {
 			_, available := availableByID[gpu.ID]
 			gpu.Available = available
 		}
@@ -193,12 +217,13 @@ func (s *Scheduler) RequestTask(ctx context.Context, req *pb.TaskRequest) (*pb.T
 	task.WorkerID = workerID
 	task.AssignedGPUs = assignedGPUIDs
 	task.StartTime = time.Now()
+	s.grantLeaseLocked(task, workerID)
 
 	worker.Status = pb.WorkerStatus_BUSY
 	s.recordWorkerStatusChange()
 	worker.Tasks[task.ID] = task
 
-	for _, gpu := range worker.GPUs {
+	for _, gpu := range worker.GPUDevices {
 		for _, id := range assignedGPUIDs {
 			if gpu.ID == id {
 				gpu.Available = false
@@ -231,7 +256,7 @@ func selectGPUIDsForTask(worker *Worker, task *Task) []string {
 	}
 
 	assigned := make([]string, 0, task.RequiredGPUs)
-	for _, gpu := range worker.GPUs {
+	for _, gpu := range worker.GPUDevices {
 		if gpu.Available && gpu.MemoryMB >= task.MinGPUMemory {
 			assigned = append(assigned, gpu.ID)
 			if len(assigned) == int(task.RequiredGPUs) {
@@ -305,17 +330,35 @@ func (s *Scheduler) ReportTaskStatus(ctx context.Context, update *pb.TaskStatusU
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	if update == nil {
+		return nil, status.Error(codes.InvalidArgument, "status update is required")
+	}
+
 	taskID := update.TaskId
-	workerID := update.WorkerId
+	reportingWorkerID := strings.TrimSpace(update.WorkerId)
+	if reportingWorkerID == "" {
+		return nil, status.Error(codes.InvalidArgument, "worker_id is required")
+	}
 
 	task, exists := s.tasks[taskID]
 	if !exists {
 		return nil, status.Errorf(codes.NotFound, "Task not found: %s", taskID)
 	}
 
-	worker, exists := s.workers[workerID]
+	worker, exists := s.workers[reportingWorkerID]
 	if !exists {
-		return nil, status.Errorf(codes.NotFound, "Worker not found: %s", workerID)
+		return nil, status.Errorf(codes.NotFound, "Worker not found: %s", reportingWorkerID)
+	}
+
+	leaseHolder := strings.TrimSpace(task.LeaseOwner)
+	if leaseHolder == "" {
+		leaseHolder = strings.TrimSpace(task.WorkerID)
+	}
+	if leaseHolder == "" {
+		return nil, status.Errorf(codes.FailedPrecondition, "task %s has no lease owner", taskID)
+	}
+	if reportingWorkerID != leaseHolder {
+		return nil, status.Errorf(codes.PermissionDenied, "worker %q is not the lease holder for task %s", reportingWorkerID, taskID)
 	}
 
 	if err := ValidateTransition(task.Status.String(), update.Status.String()); err != nil {
@@ -325,9 +368,16 @@ func (s *Scheduler) ReportTaskStatus(ctx context.Context, update *pb.TaskStatusU
 	task.Progress = update.Progress
 	task.Metrics = update.Metrics
 
+	if task.Status == pb.TaskStatus_RUNNING {
+		s.grantLeaseLocked(task, reportingWorkerID)
+	} else {
+		task.LeaseOwner = ""
+		task.LeaseExpiresAt = time.Time{}
+	}
+
 	if update.Status == pb.TaskStatus_COMPLETED || update.Status == pb.TaskStatus_FAILED {
 		s.recordTaskCompletion(task)
-		for _, gpu := range worker.GPUs {
+		for _, gpu := range worker.GPUDevices {
 			for _, id := range task.AssignedGPUs {
 				if gpu.ID == id {
 					gpu.Available = true
@@ -359,6 +409,43 @@ func (s *Scheduler) ReportTaskStatus(ctx context.Context, update *pb.TaskStatusU
 	}, nil
 }
 
+func (s *Scheduler) Heartbeat(ctx context.Context, req *pb.HeartbeatRequest) (*pb.HeartbeatResponse, error) {
+	if req == nil {
+		return nil, status.Error(codes.InvalidArgument, "request is required")
+	}
+
+	workerID := strings.TrimSpace(req.WorkerId)
+	if workerID == "" {
+		return nil, status.Error(codes.InvalidArgument, "worker_id is required")
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	worker, exists := s.workers[workerID]
+	if !exists {
+		return nil, status.Errorf(codes.NotFound, "unknown worker: %s", workerID)
+	}
+
+	now := time.Now()
+	worker.LastHeartbeat = now
+	worker.RunningTasks = int(req.RunningTasks)
+
+	for _, t := range worker.Tasks {
+		if t != nil && t.Status == pb.TaskStatus_RUNNING {
+			s.grantLeaseLocked(t, workerID)
+		}
+	}
+
+	s.logger.Info("Worker heartbeat updated", map[string]interface{}{
+		"worker_id":      workerID,
+		"running_tasks":  worker.RunningTasks,
+		"last_heartbeat": now,
+	})
+
+	return &pb.HeartbeatResponse{Ok: true}, nil
+}
+
 func (s *Scheduler) MonitorWorker(req *pb.WorkerStatusRequest, stream pb.TrainingScheduler_MonitorWorkerServer) error {
 	workerID := req.WorkerId
 
@@ -378,8 +465,8 @@ func (s *Scheduler) MonitorWorker(req *pb.WorkerStatusRequest, stream pb.Trainin
 			return status.Errorf(codes.NotFound, "Worker no longer exists: %s", workerID)
 		}
 
-		pbGPUs := make([]*pb.GPU, 0, len(worker.GPUs))
-		for _, gpu := range worker.GPUs {
+		pbGPUs := make([]*pb.GPU, 0, len(worker.GPUDevices))
+		for _, gpu := range worker.GPUDevices {
 			pbGPUs = append(pbGPUs, &pb.GPU{
 				Id:        gpu.ID,
 				Model:     gpu.Model,
@@ -461,12 +548,13 @@ func (s *Scheduler) assignPendingTasks() {
 		task.WorkerID = workerID
 		task.AssignedGPUs = gpuIDs
 		task.StartTime = time.Now()
+		s.grantLeaseLocked(task, workerID)
 
 		worker := s.workers[workerID]
 		worker.Status = pb.WorkerStatus_BUSY
 		worker.Tasks[task.ID] = task
 
-		for _, gpu := range worker.GPUs {
+		for _, gpu := range worker.GPUDevices {
 			for _, id := range gpuIDs {
 				if gpu.ID == id {
 					gpu.Available = false
@@ -500,7 +588,7 @@ func (s *Scheduler) ListWorkers(ctx context.Context, req *pb.ListWorkersRequest)
 			WorkerId: id,
 			Status:   worker.Status,
 			Address:  worker.Address,
-			GpuCount: uint32(len(worker.GPUs)),
+			GpuCount: uint32(worker.GPUs),
 		})
 	}
 

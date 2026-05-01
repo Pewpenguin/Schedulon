@@ -70,7 +70,7 @@ func isSchedulableForWorker(task *Task, worker *Worker) bool {
 	}
 
 	available := uint32(0)
-	for _, gpu := range worker.GPUs {
+	for _, gpu := range worker.GPUDevices {
 		if gpu.Available && gpu.MemoryMB >= task.MinGPUMemory {
 			available++
 			if available >= task.RequiredGPUs {
