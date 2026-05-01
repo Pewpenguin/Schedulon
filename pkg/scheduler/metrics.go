@@ -9,18 +9,20 @@ import (
 
 func (s *Scheduler) SetMetrics(metrics *metrics.SchedulerMetrics) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.metrics = metrics
+	snapshot := s.metricsSnapshotLocked()
+	s.mu.Unlock()
+
+	s.updateMetrics(snapshot.activeTasks, snapshot.pendingTasks, snapshot.activeWorkers)
 }
 
-func (s *Scheduler) updateMetrics() {
-	if s.metrics == nil {
-		return
-	}
+type schedulerMetricsSnapshot struct {
+	activeTasks   int
+	pendingTasks  int
+	activeWorkers int
+}
 
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
+func (s *Scheduler) metricsSnapshotLocked() schedulerMetricsSnapshot {
 	activeCount := 0
 	for _, task := range s.tasks {
 		if task.Status == pb.TaskStatus_RUNNING {
@@ -28,9 +30,24 @@ func (s *Scheduler) updateMetrics() {
 		}
 	}
 
-	s.metrics.SetActiveTasks(activeCount)
-	s.metrics.SetPendingTasks(s.taskQueue.Len())
-	s.metrics.SetActiveWorkers(len(s.workers))
+	return schedulerMetricsSnapshot{
+		activeTasks:   activeCount,
+		pendingTasks:  s.taskQueue.Len(),
+		activeWorkers: len(s.workers),
+	}
+}
+
+// updateMetrics publishes scheduler gauges from a precomputed snapshot.
+// It intentionally avoids touching scheduler mutexes; callers must gather
+// state while holding locks and then invoke this method after unlocking.
+func (s *Scheduler) updateMetrics(activeTasks, pendingTasks, activeWorkers int) {
+	if s.metrics == nil {
+		return
+	}
+
+	s.metrics.SetActiveTasks(activeTasks)
+	s.metrics.SetPendingTasks(pendingTasks)
+	s.metrics.SetActiveWorkers(activeWorkers)
 }
 
 func (s *Scheduler) recordTaskSubmission() {
@@ -39,7 +56,6 @@ func (s *Scheduler) recordTaskSubmission() {
 	}
 
 	s.metrics.IncrementTotalTasks()
-	s.updateMetrics()
 }
 
 func (s *Scheduler) recordTaskCompletion(task *Task) {
@@ -55,22 +71,16 @@ func (s *Scheduler) recordTaskCompletion(task *Task) {
 	} else if task.Status == pb.TaskStatus_FAILED {
 		s.metrics.IncrementFailedTasks()
 	}
-
-	s.updateMetrics()
 }
 
 func (s *Scheduler) recordWorkerRegistration() {
 	if s.metrics == nil {
 		return
 	}
-
-	s.updateMetrics()
 }
 
 func (s *Scheduler) recordWorkerStatusChange() {
 	if s.metrics == nil {
 		return
 	}
-
-	s.updateMetrics()
 }

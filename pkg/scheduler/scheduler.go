@@ -109,7 +109,6 @@ func (s *Scheduler) grantLeaseLocked(task *Task, workerID string) {
 
 func (s *Scheduler) RegisterWorker(ctx context.Context, req *pb.RegisterWorkerRequest) (*pb.RegisterWorkerResponse, error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 
 	workerID := req.WorkerId
 	if workerID == "" {
@@ -117,6 +116,7 @@ func (s *Scheduler) RegisterWorker(ctx context.Context, req *pb.RegisterWorkerRe
 	}
 
 	if _, exists := s.workers[workerID]; exists {
+		s.mu.Unlock()
 		return &pb.RegisterWorkerResponse{
 			Success:    false,
 			Message:    "Worker ID already registered",
@@ -154,6 +154,9 @@ func (s *Scheduler) RegisterWorker(ctx context.Context, req *pb.RegisterWorkerRe
 	s.recordWorkerRegistration()
 	s.updatePersistentStateLocked()
 	s.assignPendingTasks()
+	metricsSnapshot := s.metricsSnapshotLocked()
+	s.mu.Unlock()
+	s.updateMetrics(metricsSnapshot.activeTasks, metricsSnapshot.pendingTasks, metricsSnapshot.activeWorkers)
 
 	return &pb.RegisterWorkerResponse{
 		Success:    true,
@@ -164,24 +167,27 @@ func (s *Scheduler) RegisterWorker(ctx context.Context, req *pb.RegisterWorkerRe
 
 func (s *Scheduler) RequestTask(ctx context.Context, req *pb.TaskRequest) (*pb.Task, error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 
 	if req == nil {
+		s.mu.Unlock()
 		return nil, status.Error(codes.InvalidArgument, "request is required")
 	}
 
 	workerID := req.WorkerId
 	if strings.TrimSpace(workerID) == "" {
+		s.mu.Unlock()
 		return nil, status.Error(codes.InvalidArgument, "worker_id is required")
 	}
 
 	// RequestTask is worker-polling only; clients must use SubmitTask.
 	if req.Task != nil {
+		s.mu.Unlock()
 		return nil, status.Error(codes.InvalidArgument, "task submission via RequestTask is not allowed; use SubmitTask")
 	}
 
 	worker, exists := s.workers[workerID]
 	if !exists {
+		s.mu.Unlock()
 		return nil, status.Errorf(codes.NotFound, "Worker not registered: %s", workerID)
 	}
 
@@ -198,22 +204,26 @@ func (s *Scheduler) RequestTask(ctx context.Context, req *pb.TaskRequest) (*pb.T
 
 	task := s.taskQueue.Dequeue(worker)
 	if task == nil {
+		s.mu.Unlock()
 		return nil, status.Error(codes.NotFound, "No pending tasks available")
 	}
 
 	if task.Status != pb.TaskStatus_PENDING {
 		s.taskQueue.Enqueue(task)
+		s.mu.Unlock()
 		return nil, status.Error(codes.FailedPrecondition, "task is not in PENDING state")
 	}
 
 	assignedGPUIDs := selectGPUIDsForTask(worker, task)
 	if len(assignedGPUIDs) < int(task.RequiredGPUs) {
 		s.taskQueue.Enqueue(task)
+		s.mu.Unlock()
 		return nil, status.Error(codes.ResourceExhausted, "No suitable tasks for this worker")
 	}
 
 	if err := ValidateTransition(task.Status.String(), pb.TaskStatus_RUNNING.String()); err != nil {
 		s.taskQueue.Enqueue(task)
+		s.mu.Unlock()
 		return nil, status.Errorf(codes.FailedPrecondition, "invalid task state transition: %v", err)
 	}
 	task.Status = pb.TaskStatus_RUNNING
@@ -249,6 +259,9 @@ func (s *Scheduler) RequestTask(ctx context.Context, req *pb.TaskRequest) (*pb.T
 	})
 
 	s.updatePersistentStateLocked()
+	metricsSnapshot := s.metricsSnapshotLocked()
+	s.mu.Unlock()
+	s.updateMetrics(metricsSnapshot.activeTasks, metricsSnapshot.pendingTasks, metricsSnapshot.activeWorkers)
 
 	return pbTask, nil
 }
@@ -335,25 +348,28 @@ func (s *Scheduler) SubmitTask(ctx context.Context, req *pb.SubmitTaskRequest) (
 
 func (s *Scheduler) ReportTaskStatus(ctx context.Context, update *pb.TaskStatusUpdate) (*pb.TaskStatusResponse, error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 
 	if update == nil {
+		s.mu.Unlock()
 		return nil, status.Error(codes.InvalidArgument, "status update is required")
 	}
 
 	taskID := update.TaskId
 	reportingWorkerID := strings.TrimSpace(update.WorkerId)
 	if reportingWorkerID == "" {
+		s.mu.Unlock()
 		return nil, status.Error(codes.InvalidArgument, "worker_id is required")
 	}
 
 	task, exists := s.tasks[taskID]
 	if !exists {
+		s.mu.Unlock()
 		return nil, status.Errorf(codes.NotFound, "Task not found: %s", taskID)
 	}
 
 	worker, exists := s.workers[reportingWorkerID]
 	if !exists {
+		s.mu.Unlock()
 		return nil, status.Errorf(codes.NotFound, "Worker not found: %s", reportingWorkerID)
 	}
 
@@ -362,13 +378,16 @@ func (s *Scheduler) ReportTaskStatus(ctx context.Context, update *pb.TaskStatusU
 		leaseHolder = strings.TrimSpace(task.WorkerID)
 	}
 	if leaseHolder == "" {
+		s.mu.Unlock()
 		return nil, status.Errorf(codes.FailedPrecondition, "task %s has no lease owner", taskID)
 	}
 	if reportingWorkerID != leaseHolder {
+		s.mu.Unlock()
 		return nil, status.Errorf(codes.PermissionDenied, "worker %q is not the lease holder for task %s", reportingWorkerID, taskID)
 	}
 
 	if err := ValidateTransition(task.Status.String(), update.Status.String()); err != nil {
+		s.mu.Unlock()
 		return nil, status.Errorf(codes.FailedPrecondition, "invalid task state transition: %v", err)
 	}
 	task.Status = update.Status
@@ -409,6 +428,9 @@ func (s *Scheduler) ReportTaskStatus(ctx context.Context, update *pb.TaskStatusU
 	})
 
 	s.updatePersistentStateLocked()
+	metricsSnapshot := s.metricsSnapshotLocked()
+	s.mu.Unlock()
+	s.updateMetrics(metricsSnapshot.activeTasks, metricsSnapshot.pendingTasks, metricsSnapshot.activeWorkers)
 
 	return &pb.TaskStatusResponse{
 		Acknowledged: true,
@@ -511,7 +533,6 @@ func (s *Scheduler) MonitorWorker(req *pb.WorkerStatusRequest, stream pb.Trainin
 
 func (s *Scheduler) AddTask(task *Task) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 
 	s.tasks[task.ID] = task
 	s.taskQueue.Enqueue(task)
@@ -525,6 +546,9 @@ func (s *Scheduler) AddTask(task *Task) {
 	s.updatePersistentStateLocked()
 
 	s.assignPendingTasks()
+	metricsSnapshot := s.metricsSnapshotLocked()
+	s.mu.Unlock()
+	s.updateMetrics(metricsSnapshot.activeTasks, metricsSnapshot.pendingTasks, metricsSnapshot.activeWorkers)
 }
 
 func (s *Scheduler) assignPendingTasks() {

@@ -86,10 +86,11 @@ func (s *Scheduler) runFailureChecks() {
 		s.assignPendingTasks()
 	}
 
+	metricsSnapshot := s.metricsSnapshotLocked()
 	s.updatePersistentStateLocked()
 	s.mu.Unlock()
 
-	s.updateMetrics()
+	s.updateMetrics(metricsSnapshot.activeTasks, metricsSnapshot.pendingTasks, metricsSnapshot.activeWorkers)
 	s.UpdatePersistentState()
 }
 
