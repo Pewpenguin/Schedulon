@@ -78,6 +78,10 @@ message RegisterWorkerRequest {
   string worker_id = 1;
   repeated GPU gpus = 2;
   string address = 3;
+  // Host logical CPU count (e.g. runtime.NumCPU).
+  uint32 cpu_count = 4;
+  // Total system memory in MiB at registration time.
+  uint64 memory_mb_total = 5;
 }
 
 // Response to worker registration
@@ -178,6 +182,8 @@ message WorkerInfo {
   WorkerStatus status = 2;
   string address = 3;
   uint32 gpu_count = 4;
+  uint32 cpu_count = 5;
+  uint64 memory_mb_total = 6;
 }
 
 // Summary of a task

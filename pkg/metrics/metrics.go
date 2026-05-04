@@ -57,6 +57,29 @@ var (
 		Help: "Current number of tasks in scheduler queue",
 	})
 
+	schedulerSchedulingLatencySeconds = promauto.NewHistogram(
+		prometheus.HistogramOpts{
+			Name:    "scheduler_scheduling_latency_seconds",
+			Help:    "Seconds from task submission until assigned to a worker",
+			Buckets: []float64{0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 15, 60},
+		},
+	)
+
+	schedulerTaskAssignmentsTotal = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "scheduler_task_assignments_total",
+		Help: "Total number of tasks assigned from the pending queue to a worker",
+	})
+
+	schedulerLeaseExpirationsTotal = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "scheduler_lease_expirations_total",
+		Help: "Total tasks reclaimed after a scheduling lease expired",
+	})
+
+	schedulerWorkerOfflineTotal = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "scheduler_worker_offline_total",
+		Help: "Total workers marked offline due to heartbeat timeout",
+	})
+
 	schedulerActiveWorkers = promauto.NewGauge(prometheus.GaugeOpts{
 		Name: "scheduler_active_workers",
 		Help: "Current number of registered workers",
@@ -100,6 +123,7 @@ type MetricsServer struct {
 	mu     sync.Mutex
 }
 
+// NewMetricsServer serves Prometheus metrics (including scheduler_*) at GET /metrics.
 func NewMetricsServer(addr string) *MetricsServer {
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", promhttp.Handler())
@@ -165,6 +189,31 @@ func (sm *SchedulerMetrics) ObserveTaskDuration(taskName string, durationSeconds
 
 func (sm *SchedulerMetrics) SetQueueDepth(count int) {
 	schedulerQueueDepth.Set(float64(count))
+}
+
+func (sm *SchedulerMetrics) ObserveSchedulingLatency(seconds float64) {
+	if seconds < 0 {
+		return
+	}
+	schedulerSchedulingLatencySeconds.Observe(seconds)
+}
+
+func (sm *SchedulerMetrics) IncrementTaskAssignments() {
+	schedulerTaskAssignmentsTotal.Inc()
+}
+
+func (sm *SchedulerMetrics) AddLeaseExpirations(n int) {
+	if n <= 0 {
+		return
+	}
+	schedulerLeaseExpirationsTotal.Add(float64(n))
+}
+
+func (sm *SchedulerMetrics) AddWorkersMarkedOffline(n int) {
+	if n <= 0 {
+		return
+	}
+	schedulerWorkerOfflineTotal.Add(float64(n))
 }
 
 func (sm *SchedulerMetrics) SetSchedulerActiveWorkers(count int) {

@@ -41,11 +41,13 @@ type SchedulerState struct {
 }
 
 type WorkerState struct {
-	ID      string          `json:"id"`
-	GPUs    []*GPUState     `json:"gpus"`
-	Address string          `json:"address"`
-	Status  pb.WorkerStatus `json:"status"`
-	Tasks   []string        `json:"tasks"`
+	ID             string          `json:"id"`
+	GPUs           []*GPUState     `json:"gpus"`
+	Address        string          `json:"address"`
+	Status         pb.WorkerStatus `json:"status"`
+	Tasks          []string        `json:"tasks"`
+	CPUCount       uint32          `json:"cpu_count"`
+	MemoryMBTotal  uint64          `json:"memory_mb_total"`
 }
 
 type GPUState struct {
@@ -224,11 +226,13 @@ func (m *Manager) saveToDatabase(state *SchedulerState) error {
 
 	for id, worker := range state.Workers {
 		workerModel := &WorkerModel{
-			ID:        id,
-			Address:   worker.Address,
-			Status:    int(worker.Status),
-			CreatedAt: time.Now(),
-			UpdatedAt: time.Now(),
+			ID:             id,
+			Address:        worker.Address,
+			Status:         int(worker.Status),
+			CPUCount:       worker.CPUCount,
+			MemoryMBTotal:  worker.MemoryMBTotal,
+			CreatedAt:      time.Now(),
+			UpdatedAt:      time.Now(),
 		}
 
 		gpuModels := make([]*GPUModel, 0, len(worker.GPUs))
@@ -332,11 +336,13 @@ func (m *Manager) loadFromDatabase() (*SchedulerState, error) {
 		}
 
 		state.Workers[workerModel.ID] = &WorkerState{
-			ID:      workerModel.ID,
-			GPUs:    gpus,
-			Address: workerModel.Address,
-			Status:  pb.WorkerStatus(workerModel.Status),
-			Tasks:   make([]string, 0),
+			ID:             workerModel.ID,
+			GPUs:           gpus,
+			Address:        workerModel.Address,
+			Status:         pb.WorkerStatus(workerModel.Status),
+			Tasks:          make([]string, 0),
+			CPUCount:       workerModel.CPUCount,
+			MemoryMBTotal:  workerModel.MemoryMBTotal,
 		}
 	}
 

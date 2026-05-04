@@ -10,18 +10,25 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/training-scheduler/pkg/security"
 	pb "github.com/training-scheduler/proto"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 )
 
 func main() {
 	schedulerAddr := flag.String("scheduler", "localhost:50051", "Address of the scheduler server")
 	workerID := flag.String("worker", "", "Worker ID to monitor (leave empty to monitor all)")
 	refreshRate := flag.Int("refresh", 1, "Refresh rate in seconds")
+	tlsCert := flag.String("tls-cert", "", "Path to client TLS certificate (PEM) for mTLS")
+	tlsKey := flag.String("tls-key", "", "Path to client TLS private key (PEM) for mTLS")
+	tlsCA := flag.String("tls-ca", "", "Path to CA bundle (PEM) to verify the scheduler; enables TLS when set (optionally with --tls-cert and --tls-key for mTLS)")
 	flag.Parse()
 
-	conn, err := grpc.Dial(*schedulerAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	dialOpts, err := security.ClientGRPCDialOptions(*tlsCert, *tlsKey, *tlsCA)
+	if err != nil {
+		log.Fatalf("TLS: %v", err)
+	}
+	conn, err := grpc.NewClient(*schedulerAddr, dialOpts...)
 	if err != nil {
 		log.Fatalf("Failed to connect to scheduler: %v", err)
 	}

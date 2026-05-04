@@ -32,14 +32,16 @@ type Scheduler struct {
 }
 
 type Worker struct {
-	ID            string
-	GPUs          int
-	GPUDevices    []*GPU
-	Address       string
-	Status        pb.WorkerStatus
-	Tasks         map[string]*Task
-	LastHeartbeat time.Time
-	RunningTasks  int
+	ID             string
+	GPUs           int
+	GPUDevices     []*GPU
+	Address        string
+	Status         pb.WorkerStatus
+	Tasks          map[string]*Task
+	LastHeartbeat  time.Time
+	RunningTasks   int
+	CPUCount       uint32
+	MemoryMBTotal  uint64
 }
 
 type GPU struct {
@@ -59,6 +61,7 @@ type Task struct {
 	WorkerID       string
 	AssignedGPUs   []string
 	StartTime      time.Time
+	SubmittedAt    time.Time
 	Progress       float32
 	Metrics        []*pb.Metric
 	LeaseOwner     string
@@ -84,6 +87,22 @@ func NewScheduler() *Scheduler {
 		leaseDuration:    30 * time.Second,
 		workerTimeout:    60 * time.Second,
 		logger:           logger,
+	}
+}
+
+// SetTiming updates lease and worker heartbeat timeouts. Call before serving RPCs.
+// Non-positive values are ignored (existing defaults remain).
+func (s *Scheduler) SetTiming(leaseDuration, workerTimeout time.Duration) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if leaseDuration > 0 {
+		s.leaseDuration = leaseDuration
+	}
+	if workerTimeout > 0 {
+		s.workerTimeout = workerTimeout
 	}
 }
 
@@ -130,28 +149,33 @@ func (s *Scheduler) RegisterWorker(ctx context.Context, req *pb.RegisterWorkerRe
 		})
 	}
 
+	now := time.Now()
 	worker := &Worker{
-		ID:            workerID,
-		GPUs:          len(gpus),
-		GPUDevices:    gpus,
-		Address:       req.Address,
-		Status:        pb.WorkerStatus_IDLE,
-		Tasks:         make(map[string]*Task),
-		LastHeartbeat: time.Now(),
+		ID:             workerID,
+		GPUs:           len(gpus),
+		GPUDevices:     gpus,
+		Address:        req.Address,
+		Status:         pb.WorkerStatus_IDLE,
+		Tasks:          make(map[string]*Task),
+		LastHeartbeat:  now,
+		CPUCount:       req.GetCpuCount(),
+		MemoryMBTotal:  req.GetMemoryMbTotal(),
 	}
 
 	s.workers[workerID] = worker
 
-	s.logger.Info("Worker registered", map[string]interface{}{
-		"worker_id": workerID,
-		"gpu_count": len(gpus),
+	s.logger.InfoCtx(ctx, "Worker registered into worker registry", map[string]interface{}{
+		logging.FieldWorkerID: workerID,
+		"gpu_count":           len(gpus),
+		"cpu_count":           worker.CPUCount,
+		"memory_mb_total":     worker.MemoryMBTotal,
 	})
 
-	s.recordWorkerRegistration()
 	s.updatePersistentStateLocked()
 	metricsSnapshot := s.metricsSnapshotLocked()
 	s.mu.Unlock()
 	s.updateMetrics(metricsSnapshot.activeTasks, metricsSnapshot.pendingTasks, metricsSnapshot.activeWorkers)
+	s.recordWorkerRegistration()
 
 	return &pb.RegisterWorkerResponse{
 		Success:    true,
@@ -228,7 +252,6 @@ func (s *Scheduler) RequestTask(ctx context.Context, req *pb.TaskRequest) (*pb.T
 	s.grantLeaseLocked(task, workerID)
 
 	worker.Status = pb.WorkerStatus_BUSY
-	s.recordWorkerStatusChange()
 	worker.Tasks[task.ID] = task
 
 	for _, gpu := range worker.GPUDevices {
@@ -248,15 +271,21 @@ func (s *Scheduler) RequestTask(ctx context.Context, req *pb.TaskRequest) (*pb.T
 		Status:        task.Status,
 	}
 
-	s.logger.Info("Task assigned to worker", map[string]interface{}{
-		"task_id":   task.ID,
-		"worker_id": workerID,
-	})
+	var assignSchedLatencySec float64
+	var assignObserveLatency bool
+	if !task.SubmittedAt.IsZero() {
+		assignSchedLatencySec = time.Since(task.SubmittedAt).Seconds()
+		assignObserveLatency = true
+	}
+
+	s.logger.InfoCtx(ctx, "Task assigned to worker", logging.Fields(task.ID, workerID))
 
 	s.updatePersistentStateLocked()
 	metricsSnapshot := s.metricsSnapshotLocked()
 	s.mu.Unlock()
 	s.updateMetrics(metricsSnapshot.activeTasks, metricsSnapshot.pendingTasks, metricsSnapshot.activeWorkers)
+	s.recordWorkerStatusChange()
+	s.recordTaskAssigned(assignSchedLatencySec, assignObserveLatency)
 
 	return pbTask, nil
 }
@@ -307,9 +336,9 @@ func (s *Scheduler) SubmitTask(ctx context.Context, req *pb.SubmitTaskRequest) (
 		if existingTaskID, exists := s.idempotencyIndex[idempotencyKey]; exists {
 			if existingTask, taskExists := s.tasks[existingTaskID]; taskExists {
 				s.mu.Unlock()
-				s.logger.Info("Deduplicated task submission by idempotency key", map[string]interface{}{
-					"idempotency_key": idempotencyKey,
-					"task_id":         existingTaskID,
+				s.logger.InfoCtx(ctx, "Deduplicated task submission by idempotency key", map[string]interface{}{
+					"idempotency_key":    idempotencyKey,
+					logging.FieldTaskID: existingTaskID,
 				})
 				return &pb.SubmitTaskResponse{
 					TaskId: existingTaskID,
@@ -326,19 +355,21 @@ func (s *Scheduler) SubmitTask(ctx context.Context, req *pb.SubmitTaskRequest) (
 	configBytes, err := json.Marshal(exec)
 	if err != nil {
 		s.mu.Unlock()
-		s.logger.Error("Failed to marshal submitted task configuration", map[string]interface{}{
+		s.logger.ErrorCtx(ctx, "Failed to marshal submitted task configuration", map[string]interface{}{
 			"error": err.Error(),
 		})
 		return nil, status.Error(codes.Internal, "failed to serialize task configuration")
 	}
 
+	now := time.Now()
 	task := &Task{
-		ID:            taskID,
-		Name:          exec.GetImage(),
-		RequiredGPUs:  uint32(req.RequiredGpus),
-		MinGPUMemory:  0,
-		Configuration: configBytes,
-		Status:        pb.TaskStatus_PENDING,
+		ID:             taskID,
+		Name:           exec.GetImage(),
+		RequiredGPUs:   uint32(req.RequiredGpus),
+		MinGPUMemory:   0,
+		Configuration:  configBytes,
+		Status:         pb.TaskStatus_PENDING,
+		SubmittedAt:    now,
 	}
 
 	s.tasks[task.ID] = task
@@ -347,23 +378,23 @@ func (s *Scheduler) SubmitTask(ctx context.Context, req *pb.SubmitTaskRequest) (
 		s.idempotencyIndex[idempotencyKey] = task.ID
 	}
 
-	s.logger.Info("Received task submission", map[string]interface{}{
-		"task_id":         taskID,
-		"image":           exec.GetImage(),
-		"required_gpus":   req.RequiredGpus,
-		"priority":        req.Priority,
-		"idempotency_key": idempotencyKey,
+	s.logger.InfoCtx(ctx, "Received task submission", map[string]interface{}{
+		logging.FieldTaskID: taskID,
+		"image":             exec.GetImage(),
+		"required_gpus":     req.RequiredGpus,
+		"priority":          req.Priority,
+		"idempotency_key":   idempotencyKey,
 	})
 
-	s.logger.Info("New task added", map[string]interface{}{
-		"task_id":       task.ID,
-		"required_gpus": task.RequiredGPUs,
+	s.logger.InfoCtx(ctx, "New task added", map[string]interface{}{
+		logging.FieldTaskID: task.ID,
+		"required_gpus":     task.RequiredGPUs,
 	})
-	s.recordTaskSubmission()
 	s.updatePersistentStateLocked()
 	metricsSnapshot := s.metricsSnapshotLocked()
 	s.mu.Unlock()
 	s.updateMetrics(metricsSnapshot.activeTasks, metricsSnapshot.pendingTasks, metricsSnapshot.activeWorkers)
+	s.recordTaskSubmission()
 
 	return &pb.SubmitTaskResponse{
 		TaskId: task.ID,
@@ -426,8 +457,15 @@ func (s *Scheduler) ReportTaskStatus(ctx context.Context, update *pb.TaskStatusU
 		task.LeaseExpiresAt = time.Time{}
 	}
 
-	if update.Status == pb.TaskStatus_COMPLETED || update.Status == pb.TaskStatus_FAILED {
-		s.recordTaskCompletion(task)
+	var completedName string
+	var completedStatus pb.TaskStatus
+	var completedStart time.Time
+	recordCompletion := update.Status == pb.TaskStatus_COMPLETED || update.Status == pb.TaskStatus_FAILED
+	workerBecameIdle := false
+	if recordCompletion {
+		completedName = task.Name
+		completedStatus = task.Status
+		completedStart = task.StartTime
 		for _, gpu := range worker.GPUDevices {
 			for _, id := range task.AssignedGPUs {
 				if gpu.ID == id {
@@ -440,20 +478,27 @@ func (s *Scheduler) ReportTaskStatus(ctx context.Context, update *pb.TaskStatusU
 
 		if len(worker.Tasks) == 0 {
 			worker.Status = pb.WorkerStatus_IDLE
-			s.recordWorkerStatusChange()
+			workerBecameIdle = true
 		}
 	}
-
-	s.logger.Info("Task status updated", map[string]interface{}{
-		"task_id":  taskID,
-		"status":   update.Status.String(),
-		"progress": update.Progress * 100,
-	})
 
 	s.updatePersistentStateLocked()
 	metricsSnapshot := s.metricsSnapshotLocked()
 	s.mu.Unlock()
 	s.updateMetrics(metricsSnapshot.activeTasks, metricsSnapshot.pendingTasks, metricsSnapshot.activeWorkers)
+	if workerBecameIdle {
+		s.recordWorkerStatusChange()
+	}
+	if recordCompletion {
+		s.recordTaskCompletionSnapshot(completedName, completedStatus, completedStart)
+	}
+
+	s.logger.InfoCtx(ctx, "Task status updated", map[string]interface{}{
+		logging.FieldTaskID:   taskID,
+		logging.FieldWorkerID: reportingWorkerID,
+		"status":              update.Status.String(),
+		"progress":            update.Progress * 100,
+	})
 
 	return &pb.TaskStatusResponse{
 		Acknowledged: true,
@@ -481,7 +526,8 @@ func (s *Scheduler) Heartbeat(ctx context.Context, req *pb.HeartbeatRequest) (*p
 
 	now := time.Now()
 	worker.LastHeartbeat = now
-	worker.RunningTasks = int(req.RunningTasks)
+	runningTasks := int(req.RunningTasks)
+	worker.RunningTasks = runningTasks
 
 	for _, t := range worker.Tasks {
 		if t != nil && t.Status == pb.TaskStatus_RUNNING {
@@ -489,13 +535,14 @@ func (s *Scheduler) Heartbeat(ctx context.Context, req *pb.HeartbeatRequest) (*p
 		}
 	}
 
-	s.logger.Info("Worker heartbeat updated", map[string]interface{}{
-		"worker_id":      workerID,
-		"running_tasks":  worker.RunningTasks,
-		"last_heartbeat": now,
-	})
 	s.mu.Unlock()
 	s.recordWorkerHeartbeat()
+
+	s.logger.InfoCtx(ctx, "Worker heartbeat updated", map[string]interface{}{
+		logging.FieldWorkerID: workerID,
+		"running_tasks":       runningTasks,
+		"last_heartbeat":      now,
+	})
 
 	return &pb.HeartbeatResponse{Ok: true}, nil
 }
@@ -561,20 +608,23 @@ func (s *Scheduler) AddTask(task *Task) {
 
 	// Pull-only scheduling architecture:
 	// SubmitTask -> queue.Enqueue -> worker RequestTask -> queue.Dequeue(worker).
+	if task.SubmittedAt.IsZero() {
+		task.SubmittedAt = time.Now()
+	}
 	s.tasks[task.ID] = task
 	s.taskQueue.Enqueue(task)
-
-	s.logger.Info("New task added", map[string]interface{}{
-		"task_id":       task.ID,
-		"required_gpus": task.RequiredGPUs,
-	})
-	s.recordTaskSubmission()
 
 	s.updatePersistentStateLocked()
 
 	metricsSnapshot := s.metricsSnapshotLocked()
 	s.mu.Unlock()
 	s.updateMetrics(metricsSnapshot.activeTasks, metricsSnapshot.pendingTasks, metricsSnapshot.activeWorkers)
+	s.recordTaskSubmission()
+
+	s.logger.InfoCtx(context.Background(), "New task added", map[string]interface{}{
+		logging.FieldTaskID: task.ID,
+		"required_gpus":     task.RequiredGPUs,
+	})
 }
 
 func (s *Scheduler) ListWorkers(ctx context.Context, req *pb.ListWorkersRequest) (*pb.ListWorkersResponse, error) {
@@ -587,10 +637,12 @@ func (s *Scheduler) ListWorkers(ctx context.Context, req *pb.ListWorkersRequest)
 
 	for id, worker := range s.workers {
 		response.Workers = append(response.Workers, &pb.WorkerInfo{
-			WorkerId: id,
-			Status:   worker.Status,
-			Address:  worker.Address,
-			GpuCount: uint32(worker.GPUs),
+			WorkerId:       id,
+			Status:         worker.Status,
+			Address:        worker.Address,
+			GpuCount:       uint32(worker.GPUs),
+			CpuCount:       worker.CPUCount,
+			MemoryMbTotal:  worker.MemoryMBTotal,
 		})
 	}
 

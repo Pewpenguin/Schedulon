@@ -1,9 +1,11 @@
 package scheduler
 
 import (
+	"context"
 	"fmt"
 	"time"
 
+	"github.com/training-scheduler/pkg/logging"
 	"github.com/training-scheduler/pkg/persistence"
 	pb "github.com/training-scheduler/proto"
 )
@@ -27,11 +29,11 @@ func (s *Scheduler) EnablePersistence(config persistence.Config) error {
 	s.mu.Lock()
 
 	if err != nil {
-		s.logger.Warn("Failed to load existing state", map[string]interface{}{"error": err.Error()})
+		s.logger.WarnCtx(context.Background(), "Failed to load existing state", map[string]interface{}{"error": err.Error()})
 	}
 
 	if config.AutoSave {
-		s.logger.Info("Automatic state saving enabled", map[string]interface{}{"interval": config.SaveInterval})
+		s.logger.InfoCtx(context.Background(), "Automatic state saving enabled", map[string]interface{}{"interval": config.SaveInterval})
 	}
 
 	return nil
@@ -48,7 +50,7 @@ func (s *Scheduler) DisablePersistence() {
 
 		s.persistenceManager.Stop()
 		s.persistenceManager = nil
-		s.logger.Info("Persistence disabled", nil)
+		s.logger.InfoCtx(context.Background(), "Persistence disabled", nil)
 	}
 }
 
@@ -84,11 +86,13 @@ func (s *Scheduler) SaveState() error {
 		}
 
 		state.Workers[id] = &persistence.WorkerState{
-			ID:      id,
-			GPUs:    gpuStates,
-			Address: worker.Address,
-			Status:  worker.Status,
-			Tasks:   taskIDs,
+			ID:             id,
+			GPUs:           gpuStates,
+			Address:        worker.Address,
+			Status:         worker.Status,
+			Tasks:          taskIDs,
+			CPUCount:       worker.CPUCount,
+			MemoryMBTotal:  worker.MemoryMBTotal,
 		}
 	}
 
@@ -121,11 +125,11 @@ func (s *Scheduler) SaveState() error {
 
 	err := s.persistenceManager.SaveState(state)
 	if err != nil {
-		s.logger.Error("Failed to save scheduler state", map[string]interface{}{"error": err.Error()})
+		s.logger.ErrorCtx(context.Background(), "Failed to save scheduler state", map[string]interface{}{"error": err.Error()})
 		return err
 	}
 
-	s.logger.Info("Scheduler state saved successfully", nil)
+	s.logger.InfoCtx(context.Background(), "Scheduler state saved successfully", nil)
 	return nil
 }
 
@@ -139,16 +143,16 @@ func (s *Scheduler) LoadState() error {
 
 	state, err := s.persistenceManager.LoadState()
 	if err != nil {
-		s.logger.Error("Failed to load scheduler state", map[string]interface{}{"error": err.Error()})
+		s.logger.ErrorCtx(context.Background(), "Failed to load scheduler state", map[string]interface{}{"error": err.Error()})
 		return err
 	}
 
 	if state == nil {
-		s.logger.Info("No previous state found, starting with empty state", nil)
+		s.logger.InfoCtx(context.Background(), "No previous state found, starting with empty state", nil)
 		return nil
 	}
 
-	s.logger.Info("Loading scheduler state", map[string]interface{}{"saved_at": state.SavedAt})
+	s.logger.InfoCtx(context.Background(), "Loading scheduler state", map[string]interface{}{"saved_at": state.SavedAt})
 
 	s.workers = make(map[string]*Worker)
 	s.tasks = make(map[string]*Task)
@@ -192,13 +196,15 @@ func (s *Scheduler) LoadState() error {
 		}
 
 		worker := &Worker{
-			ID:            id,
-			GPUs:          len(gpus),
-			GPUDevices:    gpus,
-			Address:       workerState.Address,
-			Status:        workerState.Status,
-			Tasks:         make(map[string]*Task),
-			LastHeartbeat: time.Now(),
+			ID:             id,
+			GPUs:           len(gpus),
+			GPUDevices:     gpus,
+			Address:        workerState.Address,
+			Status:         workerState.Status,
+			Tasks:          make(map[string]*Task),
+			LastHeartbeat:  time.Now(),
+			CPUCount:       workerState.CPUCount,
+			MemoryMBTotal:  workerState.MemoryMBTotal,
 		}
 
 		s.workers[id] = worker
@@ -206,9 +212,9 @@ func (s *Scheduler) LoadState() error {
 		for _, taskID := range workerState.Tasks {
 			task, exists := s.tasks[taskID]
 			if !exists {
-				s.logger.Warn("Task referenced by worker not found", map[string]interface{}{
-					"task_id":   taskID,
-					"worker_id": id,
+				s.logger.WarnCtx(context.Background(), "Task referenced by worker not found", map[string]interface{}{
+					logging.FieldTaskID:   taskID,
+					logging.FieldWorkerID: id,
 				})
 				continue
 			}
@@ -220,33 +226,36 @@ func (s *Scheduler) LoadState() error {
 	for _, taskID := range state.PendingTasks {
 		task, exists := s.tasks[taskID]
 		if !exists {
-			s.logger.Warn("Pending task not found", map[string]interface{}{"task_id": taskID})
+			s.logger.WarnCtx(context.Background(), "Pending task not found", map[string]interface{}{logging.FieldTaskID: taskID})
 			continue
 		}
 
 		if task.Status != pb.TaskStatus_PENDING {
 			if err := ValidateTransition(task.Status.String(), pb.TaskStatus_PENDING.String()); err != nil {
-				s.logger.Warn("Skipping task from pending list due to invalid state transition", map[string]interface{}{
-					"task_id": taskID,
-					"status":  task.Status.String(),
-					"error":   err.Error(),
+				s.logger.WarnCtx(context.Background(), "Skipping task from pending list due to invalid state transition", map[string]interface{}{
+					logging.FieldTaskID: taskID,
+					"status":            task.Status.String(),
+					"error":             err.Error(),
 				})
 				continue
 			}
-			s.logger.Warn("Task marked as pending but has different status", map[string]interface{}{
-				"task_id": taskID,
-				"status":  task.Status.String(),
+			s.logger.WarnCtx(context.Background(), "Task marked as pending but has different status", map[string]interface{}{
+				logging.FieldTaskID: taskID,
+				"status":            task.Status.String(),
 			})
 			task.Status = pb.TaskStatus_PENDING
 		}
 
+		if task.SubmittedAt.IsZero() {
+			task.SubmittedAt = time.Now()
+		}
 		s.taskQueue.Enqueue(task)
 	}
 
 	// After restart, RUNNING tasks have no live worker execution guarantee; reclaim them for reassignment.
 	staleRecovered := s.recoverStaleRunningTasksAfterLoadLocked()
 
-	s.logger.Info("Scheduler state loaded successfully", map[string]interface{}{
+	s.logger.InfoCtx(context.Background(), "Scheduler state loaded successfully", map[string]interface{}{
 		"workers":                 len(s.workers),
 		"tasks":                   len(s.tasks),
 		"pending_tasks":           s.taskQueue.Len(),
@@ -282,9 +291,9 @@ func (s *Scheduler) recoverStaleRunningTasksAfterLoadLocked() int {
 			}
 		}
 
-		s.logger.Info("Recovered stale RUNNING task after restart", map[string]interface{}{
-			"task_id":            id,
-			"previous_worker_id": workerID,
+		s.logger.InfoCtx(context.Background(), "Recovered stale RUNNING task after restart", map[string]interface{}{
+			logging.FieldTaskID:   id,
+			logging.FieldWorkerID: workerID,
 		})
 
 		s.taskQueue.Requeue(task)
@@ -292,7 +301,7 @@ func (s *Scheduler) recoverStaleRunningTasksAfterLoadLocked() int {
 	}
 
 	if n > 0 {
-		s.logger.Info("Restart recovery: requeued stale RUNNING tasks for reassignment", map[string]interface{}{
+		s.logger.InfoCtx(context.Background(), "Restart recovery: requeued stale RUNNING tasks for reassignment", map[string]interface{}{
 			"count": n,
 		})
 	}

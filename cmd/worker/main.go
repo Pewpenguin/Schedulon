@@ -14,12 +14,17 @@ import (
 
 	"github.com/training-scheduler/pkg/logging"
 	"github.com/training-scheduler/pkg/metrics"
+	"github.com/training-scheduler/pkg/security"
 	"github.com/training-scheduler/pkg/worker"
 	pb "github.com/training-scheduler/proto"
 )
 
 func main() {
-	schedulerAddr := flag.String("scheduler", "localhost:50051", "Address of the scheduler server")
+	schedDefault := strings.TrimSpace(os.Getenv("SCHEDULER_ADDR"))
+	if schedDefault == "" {
+		schedDefault = "localhost:50051"
+	}
+	schedulerAddr := flag.String("scheduler", schedDefault, "Address of the scheduler server (default from SCHEDULER_ADDR when set)")
 	gpuIDs := flag.String("gpus", "", "Comma-separated list of GPU IDs")
 	gpuModels := flag.String("models", "", "Comma-separated list of GPU models")
 	gpuMemories := flag.String("memories", "", "Comma-separated list of GPU memory sizes in MB")
@@ -30,6 +35,9 @@ func main() {
 	workDir := flag.String("work-dir", "/var/lib/scheduler-worker", "Worker runtime data directory")
 	dockerSocket := flag.String("docker-socket", "/var/run/docker.sock", "Path to Docker socket")
 	artifactDir := flag.String("artifact-dir", "/var/lib/scheduler-worker/artifacts", "Directory for task artifacts")
+	tlsCert := flag.String("tls-cert", "", "Path to client TLS certificate (PEM) for mTLS")
+	tlsKey := flag.String("tls-key", "", "Path to client TLS private key (PEM) for mTLS")
+	tlsCA := flag.String("tls-ca", "", "Path to CA bundle (PEM) to verify the scheduler; enables TLS when set (optionally with --tls-cert and --tls-key for mTLS)")
 	flag.Parse()
 
 	requiredDirs := []string{
@@ -103,7 +111,12 @@ func main() {
 		}
 	}()
 
-	worker, initErr := worker.NewWorker(*schedulerAddr, gpus)
+	dialOpts, dialErr := security.ClientGRPCDialOptions(*tlsCert, *tlsKey, *tlsCA)
+	if dialErr != nil {
+		logger.Fatal("TLS configuration failed", map[string]interface{}{"error": dialErr.Error()})
+	}
+
+	worker, initErr := worker.NewWorker(*schedulerAddr, gpus, dialOpts...)
 	if initErr != nil {
 		logger.Fatal("Failed to create worker", map[string]interface{}{"error": initErr.Error()})
 	}

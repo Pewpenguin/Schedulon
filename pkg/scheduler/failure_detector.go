@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/training-scheduler/pkg/logging"
 	pb "github.com/training-scheduler/proto"
 )
 
@@ -38,6 +39,8 @@ func (s *Scheduler) runFailureChecks() {
 	now := time.Now()
 	workerTO := s.effectiveWorkerTimeout()
 	requeuedTasks := 0
+	leaseExpirations := 0
+	workersMarkedOffline := 0
 
 	for id, worker := range s.workers {
 		if worker.Status == pb.WorkerStatus_OFFLINE {
@@ -49,13 +52,14 @@ func (s *Scheduler) runFailureChecks() {
 		}
 		if now.Sub(worker.LastHeartbeat) > workerTO {
 			requeuedTasks += s.requeueTasksForOfflineWorkerLocked(id)
-			s.logger.Warn("Worker marked offline (heartbeat timeout)", map[string]interface{}{
-				"worker_id":        id,
-				"last_heartbeat":   worker.LastHeartbeat,
-				"worker_timeout":   workerTO.String(),
-				"elapsed_since_hb": now.Sub(worker.LastHeartbeat).String(),
+			s.logger.WarnCtx(context.Background(), "Worker marked offline (heartbeat timeout)", map[string]interface{}{
+				logging.FieldWorkerID: id,
+				"last_heartbeat":      worker.LastHeartbeat,
+				"worker_timeout":      workerTO.String(),
+				"elapsed_since_hb":    now.Sub(worker.LastHeartbeat).String(),
 			})
 			worker.Status = pb.WorkerStatus_OFFLINE
+			workersMarkedOffline++
 		}
 	}
 
@@ -70,13 +74,14 @@ func (s *Scheduler) runFailureChecks() {
 			continue
 		}
 
-		s.logger.Info("Task reclaimed due to expired lease", map[string]interface{}{
-			"task_id":            task.ID,
-			"previous_worker_id": task.WorkerID,
-			"lease_expired_at":   task.LeaseExpiresAt,
+		s.logger.InfoCtx(context.Background(), "Task reclaimed due to expired lease", map[string]interface{}{
+			logging.FieldTaskID:   task.ID,
+			logging.FieldWorkerID: task.WorkerID,
+			"lease_expired_at":    task.LeaseExpiresAt,
 		})
 		if s.reclaimExpiredTaskLocked(task) {
 			requeuedTasks++
+			leaseExpirations++
 		}
 	}
 
@@ -86,6 +91,8 @@ func (s *Scheduler) runFailureChecks() {
 
 	s.updateMetrics(metricsSnapshot.activeTasks, metricsSnapshot.pendingTasks, metricsSnapshot.activeWorkers)
 	s.recordTasksRequeued(requeuedTasks)
+	s.recordLeaseExpirations(leaseExpirations)
+	s.recordWorkersMarkedOffline(workersMarkedOffline)
 	s.UpdatePersistentState()
 }
 
@@ -145,10 +152,7 @@ func (s *Scheduler) requeueTasksForOfflineWorkerLocked(workerID string) int {
 			}
 		}
 
-		s.logger.Info("Task requeued (worker offline)", map[string]interface{}{
-			"task_id":   task.ID,
-			"worker_id": workerID,
-		})
+		s.logger.InfoCtx(context.Background(), "Task requeued (worker offline)", logging.Fields(task.ID, workerID))
 		s.taskQueue.Requeue(task)
 		requeued++
 	}

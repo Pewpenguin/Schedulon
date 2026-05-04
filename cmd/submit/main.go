@@ -7,9 +7,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/training-scheduler/pkg/security"
 	pb "github.com/training-scheduler/proto"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 )
 
 func main() {
@@ -19,6 +19,9 @@ func main() {
 	requiredGPUs := flag.Uint("gpus", 1, "Number of GPUs required for the task")
 	priority := flag.Int("priority", 0, "Task priority (higher means more important)")
 	idempotencyKey := flag.String("idempotency-key", "", "Optional idempotency key for duplicate submission handling")
+	tlsCert := flag.String("tls-cert", "", "Path to client TLS certificate (PEM) for mTLS")
+	tlsKey := flag.String("tls-key", "", "Path to client TLS private key (PEM) for mTLS")
+	tlsCA := flag.String("tls-ca", "", "Path to CA bundle (PEM) to verify the scheduler; enables TLS when set (optionally with --tls-cert and --tls-key for mTLS)")
 	flag.Parse()
 
 	if strings.TrimSpace(*image) == "" {
@@ -34,7 +37,11 @@ func main() {
 		log.Fatal("--priority must be non-negative")
 	}
 
-	conn, err := grpc.NewClient(*schedulerAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	dialOpts, err := security.ClientGRPCDialOptions(*tlsCert, *tlsKey, *tlsCA)
+	if err != nil {
+		log.Fatalf("TLS: %v", err)
+	}
+	conn, err := grpc.NewClient(*schedulerAddr, dialOpts...)
 	if err != nil {
 		log.Fatalf("Failed to connect to scheduler: %v", err)
 	}

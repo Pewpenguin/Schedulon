@@ -371,10 +371,14 @@ func (x *Task) GetStatus() TaskStatus {
 
 // Request to register a worker
 type RegisterWorkerRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	WorkerId      string                 `protobuf:"bytes,1,opt,name=worker_id,json=workerId,proto3" json:"worker_id,omitempty"`
-	Gpus          []*GPU                 `protobuf:"bytes,2,rep,name=gpus,proto3" json:"gpus,omitempty"`
-	Address       string                 `protobuf:"bytes,3,opt,name=address,proto3" json:"address,omitempty"`
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	WorkerId string                 `protobuf:"bytes,1,opt,name=worker_id,json=workerId,proto3" json:"worker_id,omitempty"`
+	Gpus     []*GPU                 `protobuf:"bytes,2,rep,name=gpus,proto3" json:"gpus,omitempty"`
+	Address  string                 `protobuf:"bytes,3,opt,name=address,proto3" json:"address,omitempty"`
+	// Host logical CPU count (e.g. runtime.NumCPU).
+	CpuCount uint32 `protobuf:"varint,4,opt,name=cpu_count,json=cpuCount,proto3" json:"cpu_count,omitempty"`
+	// Total system memory in MiB at registration time.
+	MemoryMbTotal uint64 `protobuf:"varint,5,opt,name=memory_mb_total,json=memoryMbTotal,proto3" json:"memory_mb_total,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -428,6 +432,20 @@ func (x *RegisterWorkerRequest) GetAddress() string {
 		return x.Address
 	}
 	return ""
+}
+
+func (x *RegisterWorkerRequest) GetCpuCount() uint32 {
+	if x != nil {
+		return x.CpuCount
+	}
+	return 0
+}
+
+func (x *RegisterWorkerRequest) GetMemoryMbTotal() uint64 {
+	if x != nil {
+		return x.MemoryMbTotal
+	}
+	return 0
 }
 
 // Response to worker registration
@@ -1236,6 +1254,8 @@ type WorkerInfo struct {
 	Status        WorkerStatus           `protobuf:"varint,2,opt,name=status,proto3,enum=scheduler.WorkerStatus" json:"status,omitempty"`
 	Address       string                 `protobuf:"bytes,3,opt,name=address,proto3" json:"address,omitempty"`
 	GpuCount      uint32                 `protobuf:"varint,4,opt,name=gpu_count,json=gpuCount,proto3" json:"gpu_count,omitempty"`
+	CpuCount      uint32                 `protobuf:"varint,5,opt,name=cpu_count,json=cpuCount,proto3" json:"cpu_count,omitempty"`
+	MemoryMbTotal uint64                 `protobuf:"varint,6,opt,name=memory_mb_total,json=memoryMbTotal,proto3" json:"memory_mb_total,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1294,6 +1314,20 @@ func (x *WorkerInfo) GetAddress() string {
 func (x *WorkerInfo) GetGpuCount() uint32 {
 	if x != nil {
 		return x.GpuCount
+	}
+	return 0
+}
+
+func (x *WorkerInfo) GetCpuCount() uint32 {
+	if x != nil {
+		return x.CpuCount
+	}
+	return 0
+}
+
+func (x *WorkerInfo) GetMemoryMbTotal() uint64 {
+	if x != nil {
+		return x.MemoryMbTotal
 	}
 	return 0
 }
@@ -1489,11 +1523,13 @@ const file_proto_scheduler_proto_rawDesc = "" +
 	"\rrequired_gpus\x18\x03 \x01(\rR\frequiredGpus\x12$\n" +
 	"\x0emin_gpu_memory\x18\x04 \x01(\x04R\fminGpuMemory\x12$\n" +
 	"\rconfiguration\x18\x05 \x01(\fR\rconfiguration\x12-\n" +
-	"\x06status\x18\x06 \x01(\x0e2\x15.scheduler.TaskStatusR\x06status\"r\n" +
+	"\x06status\x18\x06 \x01(\x0e2\x15.scheduler.TaskStatusR\x06status\"\xb7\x01\n" +
 	"\x15RegisterWorkerRequest\x12\x1b\n" +
 	"\tworker_id\x18\x01 \x01(\tR\bworkerId\x12\"\n" +
 	"\x04gpus\x18\x02 \x03(\v2\x0e.scheduler.GPUR\x04gpus\x12\x18\n" +
-	"\aaddress\x18\x03 \x01(\tR\aaddress\"m\n" +
+	"\aaddress\x18\x03 \x01(\tR\aaddress\x12\x1b\n" +
+	"\tcpu_count\x18\x04 \x01(\rR\bcpuCount\x12&\n" +
+	"\x0fmemory_mb_total\x18\x05 \x01(\x04R\rmemoryMbTotal\"m\n" +
 	"\x16RegisterWorkerResponse\x12\x18\n" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x18\n" +
 	"\amessage\x18\x02 \x01(\tR\amessage\x12\x1f\n" +
@@ -1554,13 +1590,15 @@ const file_proto_scheduler_proto_rawDesc = "" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x14\n" +
 	"\x12ListWorkersRequest\"F\n" +
 	"\x13ListWorkersResponse\x12/\n" +
-	"\aworkers\x18\x01 \x03(\v2\x15.scheduler.WorkerInfoR\aworkers\"\x91\x01\n" +
+	"\aworkers\x18\x01 \x03(\v2\x15.scheduler.WorkerInfoR\aworkers\"\xd6\x01\n" +
 	"\n" +
 	"WorkerInfo\x12\x1b\n" +
 	"\tworker_id\x18\x01 \x01(\tR\bworkerId\x12/\n" +
 	"\x06status\x18\x02 \x01(\x0e2\x17.scheduler.WorkerStatusR\x06status\x12\x18\n" +
 	"\aaddress\x18\x03 \x01(\tR\aaddress\x12\x1b\n" +
-	"\tgpu_count\x18\x04 \x01(\rR\bgpuCount\"|\n" +
+	"\tgpu_count\x18\x04 \x01(\rR\bgpuCount\x12\x1b\n" +
+	"\tcpu_count\x18\x05 \x01(\rR\bcpuCount\x12&\n" +
+	"\x0fmemory_mb_total\x18\x06 \x01(\x04R\rmemoryMbTotal\"|\n" +
 	"\vTaskSummary\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12-\n" +

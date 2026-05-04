@@ -58,18 +58,29 @@ func (s *Scheduler) recordTaskSubmission() {
 	s.metrics.IncrementTasksSubmitted()
 }
 
-func (s *Scheduler) recordTaskCompletion(task *Task) {
+func (s *Scheduler) recordTaskCompletionSnapshot(name string, status pb.TaskStatus, start time.Time) {
 	if s.metrics == nil {
 		return
 	}
 
-	duration := time.Since(task.StartTime).Seconds()
-	s.metrics.ObserveTaskDuration(task.Name, duration)
+	duration := time.Since(start).Seconds()
+	s.metrics.ObserveTaskDuration(name, duration)
 
-	if task.Status == pb.TaskStatus_COMPLETED {
+	if status == pb.TaskStatus_COMPLETED {
 		s.metrics.IncrementTasksCompleted()
-	} else if task.Status == pb.TaskStatus_FAILED {
+	} else if status == pb.TaskStatus_FAILED {
 		s.metrics.IncrementTasksFailed()
+	}
+}
+
+func (s *Scheduler) recordTaskAssigned(schedulingLatencySec float64, observeLatency bool) {
+	if s.metrics == nil {
+		return
+	}
+
+	s.metrics.IncrementTaskAssignments()
+	if observeLatency {
+		s.metrics.ObserveSchedulingLatency(schedulingLatencySec)
 	}
 }
 
@@ -97,6 +108,20 @@ func (s *Scheduler) recordTasksRequeued(count int) {
 		return
 	}
 	s.metrics.AddTasksRequeued(count)
+}
+
+func (s *Scheduler) recordLeaseExpirations(n int) {
+	if s.metrics == nil || n <= 0 {
+		return
+	}
+	s.metrics.AddLeaseExpirations(n)
+}
+
+func (s *Scheduler) recordWorkersMarkedOffline(n int) {
+	if s.metrics == nil || n <= 0 {
+		return
+	}
+	s.metrics.AddWorkersMarkedOffline(n)
 }
 
 func (s *Scheduler) recordWorkerHeartbeat() {

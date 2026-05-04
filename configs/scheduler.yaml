@@ -1,0 +1,8 @@
+# Scheduler runtime configuration (optional).
+# Values here are defaults; cmd/server applies them when the file is present.
+# Missing file uses the same built-in defaults.
+
+scheduler:
+  port: 50051
+  lease_duration: 30s
+  worker_timeout: 60s

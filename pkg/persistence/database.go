@@ -43,11 +43,13 @@ func DefaultPostgresConfig() DatabaseConfig {
 }
 
 type WorkerModel struct {
-	ID        string `gorm:"primaryKey"`
-	Address   string
-	Status    int
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	ID             string `gorm:"primaryKey"`
+	Address        string
+	Status         int
+	CPUCount       uint32
+	MemoryMBTotal  uint64
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
 }
 
 type GPUModel struct {
