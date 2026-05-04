@@ -43,13 +43,16 @@ func DefaultPostgresConfig() DatabaseConfig {
 }
 
 type WorkerModel struct {
-	ID             string `gorm:"primaryKey"`
-	Address        string
-	Status         int
-	CPUCount       uint32
-	MemoryMBTotal  uint64
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
+	ID               string `gorm:"primaryKey"`
+	Address          string
+	Status           int
+	CPUCount         uint32
+	MemoryMBTotal    uint64
+	GPUMemoryTotal   int32
+	GPUMemoryFree    int32
+	GPUModel         string
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
 }
 
 type GPUModel struct {
@@ -63,17 +66,25 @@ type GPUModel struct {
 }
 
 type TaskModel struct {
-	ID            string `gorm:"primaryKey"`
-	Name          string
-	RequiredGPUs  uint32
-	MinGPUMemory  uint64
-	Configuration []byte
-	Status        int
-	WorkerID      string
-	StartTime     time.Time
-	Progress      float32
-	CreatedAt     time.Time
-	UpdatedAt     time.Time
+	ID                 string `gorm:"primaryKey"`
+	Name               string
+	RequiredGPUs       uint32
+	MinGPUMemory       uint64
+	Configuration      []byte
+	Status             int
+	WorkerID           string
+	StartTime          time.Time
+	Progress           float32
+	Priority           int32
+	MaxRetries         int32
+	RetryCount         int32
+	Tenant             string
+	RequiredGPUMemory int32
+	RequiredGPUModel   string
+	SubmittedAtUnix    int64
+	NotBeforeUnix      int64
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
 }
 
 type TaskGPUModel struct {

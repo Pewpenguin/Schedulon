@@ -7,8 +7,9 @@ all: proto build
 # Generate protobuf code
 proto:
 	protoc \
-		--go_out=proto --go_opt=paths=source_relative \
-		--go-grpc_out=proto --go-grpc_opt=paths=source_relative \
+		-I=. \
+		--go_out=. --go_opt=paths=source_relative \
+		--go-grpc_out=. --go-grpc_opt=paths=source_relative \
 		proto/scheduler.proto
 
 # Build all components

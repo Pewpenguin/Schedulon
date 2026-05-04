@@ -34,6 +34,9 @@ message Worker {
   repeated GPU gpus = 2;
   string address = 3;
   WorkerStatus status = 4;
+  int32 gpu_memory_total = 10;
+  int32 gpu_memory_free = 11;
+  string gpu_model = 12;
 }
 
 // GPU resource information
@@ -62,6 +65,12 @@ message Task {
   uint64 min_gpu_memory = 4;
   bytes configuration = 5;
   TaskStatus status = 6;
+  int32 priority = 10;
+  int32 max_retries = 11;
+  int32 retry_count = 12;
+  string tenant = 13;
+  int32 required_gpu_memory = 14;
+  string required_gpu_model = 15;
 }
 
 // Task status enum
@@ -82,6 +91,11 @@ message RegisterWorkerRequest {
   uint32 cpu_count = 4;
   // Total system memory in MiB at registration time.
   uint64 memory_mb_total = 5;
+  // Optional aggregate GPU MiB (sum); if unset, derived from gpus.
+  int32 gpu_memory_total = 6;
+  int32 gpu_memory_free = 7;
+  // Optional primary GPU model; if unset, derived when all gpus share one model.
+  string gpu_model = 8;
 }
 
 // Response to worker registration
@@ -115,6 +129,10 @@ message SubmitTaskRequest {
   int32 required_gpus = 2;
   int32 priority = 3;
   string idempotency_key = 4;
+  int32 max_retries = 5;
+  string tenant = 6;
+  int32 required_gpu_memory = 7;
+  string required_gpu_model = 8;
 }
 
 // Response to task submission

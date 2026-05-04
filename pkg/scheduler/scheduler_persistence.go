@@ -86,13 +86,16 @@ func (s *Scheduler) SaveState() error {
 		}
 
 		state.Workers[id] = &persistence.WorkerState{
-			ID:             id,
-			GPUs:           gpuStates,
-			Address:        worker.Address,
-			Status:         worker.Status,
-			Tasks:          taskIDs,
-			CPUCount:       worker.CPUCount,
-			MemoryMBTotal:  worker.MemoryMBTotal,
+			ID:               id,
+			GPUs:             gpuStates,
+			Address:          worker.Address,
+			Status:           worker.Status,
+			Tasks:            taskIDs,
+			CPUCount:         worker.CPUCount,
+			MemoryMBTotal:    worker.MemoryMBTotal,
+			GPUMemoryTotal:   worker.GPUMemoryTotal,
+			GPUMemoryFree:    worker.GPUMemoryFree,
+			GPUModel:         worker.GPUModel,
 		}
 	}
 
@@ -101,18 +104,34 @@ func (s *Scheduler) SaveState() error {
 		if !task.StartTime.IsZero() {
 			startTime = task.StartTime.Unix()
 		}
+		var submittedAt int64
+		if !task.SubmittedAt.IsZero() {
+			submittedAt = task.SubmittedAt.Unix()
+		}
+		var notBefore int64
+		if !task.NotBefore.IsZero() {
+			notBefore = task.NotBefore.Unix()
+		}
 
 		state.Tasks[id] = &persistence.TaskState{
-			ID:            id,
-			Name:          task.Name,
-			RequiredGPUs:  task.RequiredGPUs,
-			MinGPUMemory:  task.MinGPUMemory,
-			Configuration: task.Configuration,
-			Status:        task.Status,
-			WorkerID:      task.WorkerID,
-			AssignedGPUs:  task.AssignedGPUs,
-			StartTime:     startTime,
-			Progress:      task.Progress,
+			ID:                id,
+			Name:              task.Name,
+			RequiredGPUs:      task.RequiredGPUs,
+			MinGPUMemory:      task.MinGPUMemory,
+			Configuration:     task.Configuration,
+			Status:            task.Status,
+			WorkerID:          task.WorkerID,
+			AssignedGPUs:      task.AssignedGPUs,
+			StartTime:         startTime,
+			Progress:          task.Progress,
+			Priority:          task.Priority,
+			MaxRetries:        task.MaxRetries,
+			RetryCount:        task.RetryCount,
+			Tenant:            task.Tenant,
+			RequiredGPUMemory: task.RequiredGPUMemory,
+			RequiredGPUModel:  task.RequiredGPUModel,
+			SubmittedAt:       submittedAt,
+			NotBefore:         notBefore,
 		}
 	}
 
@@ -168,17 +187,34 @@ func (s *Scheduler) LoadState() error {
 			startTime = time.Unix(taskState.StartTime, 0)
 		}
 
+		submittedAt := time.Time{}
+		if taskState.SubmittedAt > 0 {
+			submittedAt = time.Unix(taskState.SubmittedAt, 0)
+		}
+		notBefore := time.Time{}
+		if taskState.NotBefore > 0 {
+			notBefore = time.Unix(taskState.NotBefore, 0)
+		}
+
 		task := &Task{
-			ID:            id,
-			Name:          taskState.Name,
-			RequiredGPUs:  taskState.RequiredGPUs,
-			MinGPUMemory:  taskState.MinGPUMemory,
-			Configuration: taskState.Configuration,
-			Status:        taskState.Status,
-			WorkerID:      taskState.WorkerID,
-			AssignedGPUs:  taskState.AssignedGPUs,
-			StartTime:     startTime,
-			Progress:      taskState.Progress,
+			ID:                id,
+			Name:              taskState.Name,
+			RequiredGPUs:      taskState.RequiredGPUs,
+			MinGPUMemory:      taskState.MinGPUMemory,
+			Configuration:     taskState.Configuration,
+			Status:            taskState.Status,
+			WorkerID:          taskState.WorkerID,
+			AssignedGPUs:      taskState.AssignedGPUs,
+			StartTime:         startTime,
+			Progress:          taskState.Progress,
+			Priority:          taskState.Priority,
+			MaxRetries:        taskState.MaxRetries,
+			RetryCount:        taskState.RetryCount,
+			Tenant:            taskState.Tenant,
+			RequiredGPUMemory: taskState.RequiredGPUMemory,
+			RequiredGPUModel:  taskState.RequiredGPUModel,
+			SubmittedAt:       submittedAt,
+			NotBefore:         notBefore,
 		}
 
 		s.tasks[id] = task
@@ -206,6 +242,7 @@ func (s *Scheduler) LoadState() error {
 			CPUCount:       workerState.CPUCount,
 			MemoryMBTotal:  workerState.MemoryMBTotal,
 		}
+		recomputeWorkerGPUAggregates(worker)
 
 		s.workers[id] = worker
 

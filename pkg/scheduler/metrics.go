@@ -130,3 +130,31 @@ func (s *Scheduler) recordWorkerHeartbeat() {
 	}
 	s.metrics.IncrementWorkerHeartbeat()
 }
+
+func (s *Scheduler) recordTaskPriority(priority int32) {
+	if s.metrics == nil {
+		return
+	}
+	s.metrics.RecordTaskPriorityDistribution(priority)
+}
+
+func (s *Scheduler) recordTaskRetry() {
+	if s.metrics == nil {
+		return
+	}
+	s.metrics.IncrementTaskRetries()
+}
+
+func (s *Scheduler) recordSchedulingScore(score float64) {
+	if s.metrics == nil {
+		return
+	}
+	s.metrics.ObserveSchedulingScore(score)
+}
+
+func (s *Scheduler) recordFairnessViolation() {
+	if s.metrics == nil {
+		return
+	}
+	s.metrics.IncrementFairnessViolations()
+}

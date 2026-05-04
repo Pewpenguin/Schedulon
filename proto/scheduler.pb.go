@@ -132,13 +132,16 @@ func (TaskStatus) EnumDescriptor() ([]byte, []int) {
 
 // Worker information
 type Worker struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
-	Gpus          []*GPU                 `protobuf:"bytes,2,rep,name=gpus,proto3" json:"gpus,omitempty"`
-	Address       string                 `protobuf:"bytes,3,opt,name=address,proto3" json:"address,omitempty"`
-	Status        WorkerStatus           `protobuf:"varint,4,opt,name=status,proto3,enum=scheduler.WorkerStatus" json:"status,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	Id             string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	Gpus           []*GPU                 `protobuf:"bytes,2,rep,name=gpus,proto3" json:"gpus,omitempty"`
+	Address        string                 `protobuf:"bytes,3,opt,name=address,proto3" json:"address,omitempty"`
+	Status         WorkerStatus           `protobuf:"varint,4,opt,name=status,proto3,enum=scheduler.WorkerStatus" json:"status,omitempty"`
+	GpuMemoryTotal int32                  `protobuf:"varint,10,opt,name=gpu_memory_total,json=gpuMemoryTotal,proto3" json:"gpu_memory_total,omitempty"`
+	GpuMemoryFree  int32                  `protobuf:"varint,11,opt,name=gpu_memory_free,json=gpuMemoryFree,proto3" json:"gpu_memory_free,omitempty"`
+	GpuModel       string                 `protobuf:"bytes,12,opt,name=gpu_model,json=gpuModel,proto3" json:"gpu_model,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *Worker) Reset() {
@@ -197,6 +200,27 @@ func (x *Worker) GetStatus() WorkerStatus {
 		return x.Status
 	}
 	return WorkerStatus_IDLE
+}
+
+func (x *Worker) GetGpuMemoryTotal() int32 {
+	if x != nil {
+		return x.GpuMemoryTotal
+	}
+	return 0
+}
+
+func (x *Worker) GetGpuMemoryFree() int32 {
+	if x != nil {
+		return x.GpuMemoryFree
+	}
+	return 0
+}
+
+func (x *Worker) GetGpuModel() string {
+	if x != nil {
+		return x.GpuModel
+	}
+	return ""
 }
 
 // GPU resource information
@@ -286,15 +310,21 @@ func (x *GPU) GetMemoryBandwidth() uint64 {
 
 // Task definition
 type Task struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
-	Name          string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
-	RequiredGpus  uint32                 `protobuf:"varint,3,opt,name=required_gpus,json=requiredGpus,proto3" json:"required_gpus,omitempty"`
-	MinGpuMemory  uint64                 `protobuf:"varint,4,opt,name=min_gpu_memory,json=minGpuMemory,proto3" json:"min_gpu_memory,omitempty"`
-	Configuration []byte                 `protobuf:"bytes,5,opt,name=configuration,proto3" json:"configuration,omitempty"`
-	Status        TaskStatus             `protobuf:"varint,6,opt,name=status,proto3,enum=scheduler.TaskStatus" json:"status,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state             protoimpl.MessageState `protogen:"open.v1"`
+	Id                string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	Name              string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	RequiredGpus      uint32                 `protobuf:"varint,3,opt,name=required_gpus,json=requiredGpus,proto3" json:"required_gpus,omitempty"`
+	MinGpuMemory      uint64                 `protobuf:"varint,4,opt,name=min_gpu_memory,json=minGpuMemory,proto3" json:"min_gpu_memory,omitempty"`
+	Configuration     []byte                 `protobuf:"bytes,5,opt,name=configuration,proto3" json:"configuration,omitempty"`
+	Status            TaskStatus             `protobuf:"varint,6,opt,name=status,proto3,enum=scheduler.TaskStatus" json:"status,omitempty"`
+	Priority          int32                  `protobuf:"varint,10,opt,name=priority,proto3" json:"priority,omitempty"`
+	MaxRetries        int32                  `protobuf:"varint,11,opt,name=max_retries,json=maxRetries,proto3" json:"max_retries,omitempty"`
+	RetryCount        int32                  `protobuf:"varint,12,opt,name=retry_count,json=retryCount,proto3" json:"retry_count,omitempty"`
+	Tenant            string                 `protobuf:"bytes,13,opt,name=tenant,proto3" json:"tenant,omitempty"`
+	RequiredGpuMemory int32                  `protobuf:"varint,14,opt,name=required_gpu_memory,json=requiredGpuMemory,proto3" json:"required_gpu_memory,omitempty"`
+	RequiredGpuModel  string                 `protobuf:"bytes,15,opt,name=required_gpu_model,json=requiredGpuModel,proto3" json:"required_gpu_model,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *Task) Reset() {
@@ -369,6 +399,48 @@ func (x *Task) GetStatus() TaskStatus {
 	return TaskStatus_PENDING
 }
 
+func (x *Task) GetPriority() int32 {
+	if x != nil {
+		return x.Priority
+	}
+	return 0
+}
+
+func (x *Task) GetMaxRetries() int32 {
+	if x != nil {
+		return x.MaxRetries
+	}
+	return 0
+}
+
+func (x *Task) GetRetryCount() int32 {
+	if x != nil {
+		return x.RetryCount
+	}
+	return 0
+}
+
+func (x *Task) GetTenant() string {
+	if x != nil {
+		return x.Tenant
+	}
+	return ""
+}
+
+func (x *Task) GetRequiredGpuMemory() int32 {
+	if x != nil {
+		return x.RequiredGpuMemory
+	}
+	return 0
+}
+
+func (x *Task) GetRequiredGpuModel() string {
+	if x != nil {
+		return x.RequiredGpuModel
+	}
+	return ""
+}
+
 // Request to register a worker
 type RegisterWorkerRequest struct {
 	state    protoimpl.MessageState `protogen:"open.v1"`
@@ -379,6 +451,11 @@ type RegisterWorkerRequest struct {
 	CpuCount uint32 `protobuf:"varint,4,opt,name=cpu_count,json=cpuCount,proto3" json:"cpu_count,omitempty"`
 	// Total system memory in MiB at registration time.
 	MemoryMbTotal uint64 `protobuf:"varint,5,opt,name=memory_mb_total,json=memoryMbTotal,proto3" json:"memory_mb_total,omitempty"`
+	// Optional aggregate GPU MiB (sum); if unset, derived from gpus.
+	GpuMemoryTotal int32 `protobuf:"varint,6,opt,name=gpu_memory_total,json=gpuMemoryTotal,proto3" json:"gpu_memory_total,omitempty"`
+	GpuMemoryFree  int32 `protobuf:"varint,7,opt,name=gpu_memory_free,json=gpuMemoryFree,proto3" json:"gpu_memory_free,omitempty"`
+	// Optional primary GPU model; if unset, derived when all gpus share one model.
+	GpuModel      string `protobuf:"bytes,8,opt,name=gpu_model,json=gpuModel,proto3" json:"gpu_model,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -446,6 +523,27 @@ func (x *RegisterWorkerRequest) GetMemoryMbTotal() uint64 {
 		return x.MemoryMbTotal
 	}
 	return 0
+}
+
+func (x *RegisterWorkerRequest) GetGpuMemoryTotal() int32 {
+	if x != nil {
+		return x.GpuMemoryTotal
+	}
+	return 0
+}
+
+func (x *RegisterWorkerRequest) GetGpuMemoryFree() int32 {
+	if x != nil {
+		return x.GpuMemoryFree
+	}
+	return 0
+}
+
+func (x *RegisterWorkerRequest) GetGpuModel() string {
+	if x != nil {
+		return x.GpuModel
+	}
+	return ""
 }
 
 // Response to worker registration
@@ -664,13 +762,17 @@ func (x *ExecutionSpec) GetTimeoutSeconds() int32 {
 
 // Request to submit a task
 type SubmitTaskRequest struct {
-	state          protoimpl.MessageState `protogen:"open.v1"`
-	Exec           *ExecutionSpec         `protobuf:"bytes,1,opt,name=exec,proto3" json:"exec,omitempty"`
-	RequiredGpus   int32                  `protobuf:"varint,2,opt,name=required_gpus,json=requiredGpus,proto3" json:"required_gpus,omitempty"`
-	Priority       int32                  `protobuf:"varint,3,opt,name=priority,proto3" json:"priority,omitempty"`
-	IdempotencyKey string                 `protobuf:"bytes,4,opt,name=idempotency_key,json=idempotencyKey,proto3" json:"idempotency_key,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	state             protoimpl.MessageState `protogen:"open.v1"`
+	Exec              *ExecutionSpec         `protobuf:"bytes,1,opt,name=exec,proto3" json:"exec,omitempty"`
+	RequiredGpus      int32                  `protobuf:"varint,2,opt,name=required_gpus,json=requiredGpus,proto3" json:"required_gpus,omitempty"`
+	Priority          int32                  `protobuf:"varint,3,opt,name=priority,proto3" json:"priority,omitempty"`
+	IdempotencyKey    string                 `protobuf:"bytes,4,opt,name=idempotency_key,json=idempotencyKey,proto3" json:"idempotency_key,omitempty"`
+	MaxRetries        int32                  `protobuf:"varint,5,opt,name=max_retries,json=maxRetries,proto3" json:"max_retries,omitempty"`
+	Tenant            string                 `protobuf:"bytes,6,opt,name=tenant,proto3" json:"tenant,omitempty"`
+	RequiredGpuMemory int32                  `protobuf:"varint,7,opt,name=required_gpu_memory,json=requiredGpuMemory,proto3" json:"required_gpu_memory,omitempty"`
+	RequiredGpuModel  string                 `protobuf:"bytes,8,opt,name=required_gpu_model,json=requiredGpuModel,proto3" json:"required_gpu_model,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *SubmitTaskRequest) Reset() {
@@ -727,6 +829,34 @@ func (x *SubmitTaskRequest) GetPriority() int32 {
 func (x *SubmitTaskRequest) GetIdempotencyKey() string {
 	if x != nil {
 		return x.IdempotencyKey
+	}
+	return ""
+}
+
+func (x *SubmitTaskRequest) GetMaxRetries() int32 {
+	if x != nil {
+		return x.MaxRetries
+	}
+	return 0
+}
+
+func (x *SubmitTaskRequest) GetTenant() string {
+	if x != nil {
+		return x.Tenant
+	}
+	return ""
+}
+
+func (x *SubmitTaskRequest) GetRequiredGpuMemory() int32 {
+	if x != nil {
+		return x.RequiredGpuMemory
+	}
+	return 0
+}
+
+func (x *SubmitTaskRequest) GetRequiredGpuModel() string {
+	if x != nil {
+		return x.RequiredGpuModel
 	}
 	return ""
 }
@@ -1503,12 +1633,16 @@ var File_proto_scheduler_proto protoreflect.FileDescriptor
 
 const file_proto_scheduler_proto_rawDesc = "" +
 	"\n" +
-	"\x15proto/scheduler.proto\x12\tscheduler\"\x87\x01\n" +
+	"\x15proto/scheduler.proto\x12\tscheduler\"\xf6\x01\n" +
 	"\x06Worker\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\"\n" +
 	"\x04gpus\x18\x02 \x03(\v2\x0e.scheduler.GPUR\x04gpus\x12\x18\n" +
 	"\aaddress\x18\x03 \x01(\tR\aaddress\x12/\n" +
-	"\x06status\x18\x04 \x01(\x0e2\x17.scheduler.WorkerStatusR\x06status\"\xb0\x01\n" +
+	"\x06status\x18\x04 \x01(\x0e2\x17.scheduler.WorkerStatusR\x06status\x12(\n" +
+	"\x10gpu_memory_total\x18\n" +
+	" \x01(\x05R\x0egpuMemoryTotal\x12&\n" +
+	"\x0fgpu_memory_free\x18\v \x01(\x05R\rgpuMemoryFree\x12\x1b\n" +
+	"\tgpu_model\x18\f \x01(\tR\bgpuModel\"\xb0\x01\n" +
 	"\x03GPU\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x14\n" +
 	"\x05model\x18\x02 \x01(\tR\x05model\x12\x1b\n" +
@@ -1516,20 +1650,32 @@ const file_proto_scheduler_proto_rawDesc = "" +
 	"\tavailable\x18\x04 \x01(\bR\tavailable\x12\x1d\n" +
 	"\n" +
 	"cuda_cores\x18\x05 \x01(\rR\tcudaCores\x12)\n" +
-	"\x10memory_bandwidth\x18\x06 \x01(\x04R\x0fmemoryBandwidth\"\xca\x01\n" +
+	"\x10memory_bandwidth\x18\x06 \x01(\x04R\x0fmemoryBandwidth\"\x9e\x03\n" +
 	"\x04Task\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12#\n" +
 	"\rrequired_gpus\x18\x03 \x01(\rR\frequiredGpus\x12$\n" +
 	"\x0emin_gpu_memory\x18\x04 \x01(\x04R\fminGpuMemory\x12$\n" +
 	"\rconfiguration\x18\x05 \x01(\fR\rconfiguration\x12-\n" +
-	"\x06status\x18\x06 \x01(\x0e2\x15.scheduler.TaskStatusR\x06status\"\xb7\x01\n" +
+	"\x06status\x18\x06 \x01(\x0e2\x15.scheduler.TaskStatusR\x06status\x12\x1a\n" +
+	"\bpriority\x18\n" +
+	" \x01(\x05R\bpriority\x12\x1f\n" +
+	"\vmax_retries\x18\v \x01(\x05R\n" +
+	"maxRetries\x12\x1f\n" +
+	"\vretry_count\x18\f \x01(\x05R\n" +
+	"retryCount\x12\x16\n" +
+	"\x06tenant\x18\r \x01(\tR\x06tenant\x12.\n" +
+	"\x13required_gpu_memory\x18\x0e \x01(\x05R\x11requiredGpuMemory\x12,\n" +
+	"\x12required_gpu_model\x18\x0f \x01(\tR\x10requiredGpuModel\"\xa6\x02\n" +
 	"\x15RegisterWorkerRequest\x12\x1b\n" +
 	"\tworker_id\x18\x01 \x01(\tR\bworkerId\x12\"\n" +
 	"\x04gpus\x18\x02 \x03(\v2\x0e.scheduler.GPUR\x04gpus\x12\x18\n" +
 	"\aaddress\x18\x03 \x01(\tR\aaddress\x12\x1b\n" +
 	"\tcpu_count\x18\x04 \x01(\rR\bcpuCount\x12&\n" +
-	"\x0fmemory_mb_total\x18\x05 \x01(\x04R\rmemoryMbTotal\"m\n" +
+	"\x0fmemory_mb_total\x18\x05 \x01(\x04R\rmemoryMbTotal\x12(\n" +
+	"\x10gpu_memory_total\x18\x06 \x01(\x05R\x0egpuMemoryTotal\x12&\n" +
+	"\x0fgpu_memory_free\x18\a \x01(\x05R\rgpuMemoryFree\x12\x1b\n" +
+	"\tgpu_model\x18\b \x01(\tR\bgpuModel\"m\n" +
 	"\x16RegisterWorkerResponse\x12\x18\n" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x18\n" +
 	"\amessage\x18\x02 \x01(\tR\amessage\x12\x1f\n" +
@@ -1550,12 +1696,17 @@ const file_proto_scheduler_proto_rawDesc = "" +
 	"\x0ftimeout_seconds\x18\a \x01(\x05R\x0etimeoutSeconds\x1a6\n" +
 	"\bEnvEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xab\x01\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xc2\x02\n" +
 	"\x11SubmitTaskRequest\x12,\n" +
 	"\x04exec\x18\x01 \x01(\v2\x18.scheduler.ExecutionSpecR\x04exec\x12#\n" +
 	"\rrequired_gpus\x18\x02 \x01(\x05R\frequiredGpus\x12\x1a\n" +
 	"\bpriority\x18\x03 \x01(\x05R\bpriority\x12'\n" +
-	"\x0fidempotency_key\x18\x04 \x01(\tR\x0eidempotencyKey\"E\n" +
+	"\x0fidempotency_key\x18\x04 \x01(\tR\x0eidempotencyKey\x12\x1f\n" +
+	"\vmax_retries\x18\x05 \x01(\x05R\n" +
+	"maxRetries\x12\x16\n" +
+	"\x06tenant\x18\x06 \x01(\tR\x06tenant\x12.\n" +
+	"\x13required_gpu_memory\x18\a \x01(\x05R\x11requiredGpuMemory\x12,\n" +
+	"\x12required_gpu_model\x18\b \x01(\tR\x10requiredGpuModel\"E\n" +
 	"\x12SubmitTaskResponse\x12\x17\n" +
 	"\atask_id\x18\x01 \x01(\tR\x06taskId\x12\x16\n" +
 	"\x06status\x18\x02 \x01(\tR\x06status\"\xda\x01\n" +

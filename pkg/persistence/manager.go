@@ -41,13 +41,16 @@ type SchedulerState struct {
 }
 
 type WorkerState struct {
-	ID             string          `json:"id"`
-	GPUs           []*GPUState     `json:"gpus"`
-	Address        string          `json:"address"`
-	Status         pb.WorkerStatus `json:"status"`
-	Tasks          []string        `json:"tasks"`
-	CPUCount       uint32          `json:"cpu_count"`
-	MemoryMBTotal  uint64          `json:"memory_mb_total"`
+	ID               string          `json:"id"`
+	GPUs             []*GPUState     `json:"gpus"`
+	Address          string          `json:"address"`
+	Status           pb.WorkerStatus `json:"status"`
+	Tasks            []string        `json:"tasks"`
+	CPUCount         uint32          `json:"cpu_count"`
+	MemoryMBTotal    uint64          `json:"memory_mb_total"`
+	GPUMemoryTotal   int32           `json:"gpu_memory_total"`
+	GPUMemoryFree    int32           `json:"gpu_memory_free"`
+	GPUModel         string          `json:"gpu_model"`
 }
 
 type GPUState struct {
@@ -58,16 +61,24 @@ type GPUState struct {
 }
 
 type TaskState struct {
-	ID            string        `json:"id"`
-	Name          string        `json:"name"`
-	RequiredGPUs  uint32        `json:"required_gpus"`
-	MinGPUMemory  uint64        `json:"min_gpu_memory"`
-	Configuration []byte        `json:"configuration"`
-	Status        pb.TaskStatus `json:"status"`
-	WorkerID      string        `json:"worker_id"`
-	AssignedGPUs  []string      `json:"assigned_gpus"`
-	StartTime     int64         `json:"start_time"`
-	Progress      float32       `json:"progress"`
+	ID                 string        `json:"id"`
+	Name               string        `json:"name"`
+	RequiredGPUs       uint32        `json:"required_gpus"`
+	MinGPUMemory       uint64        `json:"min_gpu_memory"`
+	Configuration      []byte        `json:"configuration"`
+	Status             pb.TaskStatus `json:"status"`
+	WorkerID           string        `json:"worker_id"`
+	AssignedGPUs     []string      `json:"assigned_gpus"`
+	StartTime          int64         `json:"start_time"`
+	Progress           float32       `json:"progress"`
+	Priority           int32         `json:"priority"`
+	MaxRetries         int32         `json:"max_retries"`
+	RetryCount         int32         `json:"retry_count"`
+	Tenant             string        `json:"tenant"`
+	RequiredGPUMemory  int32         `json:"required_gpu_memory"`
+	RequiredGPUModel   string        `json:"required_gpu_model"`
+	SubmittedAt        int64         `json:"submitted_at"`
+	NotBefore          int64         `json:"not_before"`
 }
 
 type Manager struct {
@@ -226,13 +237,16 @@ func (m *Manager) saveToDatabase(state *SchedulerState) error {
 
 	for id, worker := range state.Workers {
 		workerModel := &WorkerModel{
-			ID:             id,
-			Address:        worker.Address,
-			Status:         int(worker.Status),
-			CPUCount:       worker.CPUCount,
-			MemoryMBTotal:  worker.MemoryMBTotal,
-			CreatedAt:      time.Now(),
-			UpdatedAt:      time.Now(),
+			ID:               id,
+			Address:          worker.Address,
+			Status:           int(worker.Status),
+			CPUCount:         worker.CPUCount,
+			MemoryMBTotal:    worker.MemoryMBTotal,
+			GPUMemoryTotal:   worker.GPUMemoryTotal,
+			GPUMemoryFree:    worker.GPUMemoryFree,
+			GPUModel:         worker.GPUModel,
+			CreatedAt:        time.Now(),
+			UpdatedAt:        time.Now(),
 		}
 
 		gpuModels := make([]*GPUModel, 0, len(worker.GPUs))
@@ -259,18 +273,34 @@ func (m *Manager) saveToDatabase(state *SchedulerState) error {
 			startTime = time.Time{}
 		}
 
+		var submittedAt, notBefore int64
+		if task.SubmittedAt > 0 {
+			submittedAt = task.SubmittedAt
+		}
+		if task.NotBefore > 0 {
+			notBefore = task.NotBefore
+		}
+
 		taskModel := &TaskModel{
-			ID:            id,
-			Name:          task.Name,
-			RequiredGPUs:  task.RequiredGPUs,
-			MinGPUMemory:  task.MinGPUMemory,
-			Configuration: task.Configuration,
-			Status:        int(task.Status),
-			WorkerID:      task.WorkerID,
-			StartTime:     startTime,
-			Progress:      task.Progress,
-			CreatedAt:     time.Now(),
-			UpdatedAt:     time.Now(),
+			ID:                 id,
+			Name:               task.Name,
+			RequiredGPUs:       task.RequiredGPUs,
+			MinGPUMemory:       task.MinGPUMemory,
+			Configuration:      task.Configuration,
+			Status:             int(task.Status),
+			WorkerID:           task.WorkerID,
+			StartTime:          startTime,
+			Progress:           task.Progress,
+			Priority:           task.Priority,
+			MaxRetries:         task.MaxRetries,
+			RetryCount:         task.RetryCount,
+			Tenant:             task.Tenant,
+			RequiredGPUMemory:  task.RequiredGPUMemory,
+			RequiredGPUModel:   task.RequiredGPUModel,
+			SubmittedAtUnix:    submittedAt,
+			NotBeforeUnix:      notBefore,
+			CreatedAt:          time.Now(),
+			UpdatedAt:          time.Now(),
 		}
 
 		if err := m.dbManager.SaveTask(taskModel, task.AssignedGPUs); err != nil {
@@ -336,13 +366,16 @@ func (m *Manager) loadFromDatabase() (*SchedulerState, error) {
 		}
 
 		state.Workers[workerModel.ID] = &WorkerState{
-			ID:             workerModel.ID,
-			GPUs:           gpus,
-			Address:        workerModel.Address,
-			Status:         pb.WorkerStatus(workerModel.Status),
-			Tasks:          make([]string, 0),
-			CPUCount:       workerModel.CPUCount,
-			MemoryMBTotal:  workerModel.MemoryMBTotal,
+			ID:               workerModel.ID,
+			GPUs:             gpus,
+			Address:          workerModel.Address,
+			Status:           pb.WorkerStatus(workerModel.Status),
+			Tasks:            make([]string, 0),
+			CPUCount:         workerModel.CPUCount,
+			MemoryMBTotal:    workerModel.MemoryMBTotal,
+			GPUMemoryTotal:   workerModel.GPUMemoryTotal,
+			GPUMemoryFree:    workerModel.GPUMemoryFree,
+			GPUModel:         workerModel.GPUModel,
 		}
 	}
 
@@ -364,16 +397,24 @@ func (m *Manager) loadFromDatabase() (*SchedulerState, error) {
 		}
 
 		state.Tasks[taskModel.ID] = &TaskState{
-			ID:            taskModel.ID,
-			Name:          taskModel.Name,
-			RequiredGPUs:  taskModel.RequiredGPUs,
-			MinGPUMemory:  taskModel.MinGPUMemory,
-			Configuration: taskModel.Configuration,
-			Status:        pb.TaskStatus(taskModel.Status),
-			WorkerID:      taskModel.WorkerID,
-			AssignedGPUs:  gpuIDs,
-			StartTime:     startTime,
-			Progress:      taskModel.Progress,
+			ID:                 taskModel.ID,
+			Name:               taskModel.Name,
+			RequiredGPUs:       taskModel.RequiredGPUs,
+			MinGPUMemory:       taskModel.MinGPUMemory,
+			Configuration:      taskModel.Configuration,
+			Status:             pb.TaskStatus(taskModel.Status),
+			WorkerID:           taskModel.WorkerID,
+			AssignedGPUs:       gpuIDs,
+			StartTime:          startTime,
+			Progress:           taskModel.Progress,
+			Priority:           taskModel.Priority,
+			MaxRetries:         taskModel.MaxRetries,
+			RetryCount:         taskModel.RetryCount,
+			Tenant:             taskModel.Tenant,
+			RequiredGPUMemory:  taskModel.RequiredGPUMemory,
+			RequiredGPUModel:   taskModel.RequiredGPUModel,
+			SubmittedAt:        taskModel.SubmittedAtUnix,
+			NotBefore:          taskModel.NotBeforeUnix,
 		}
 
 		if taskModel.WorkerID != "" {

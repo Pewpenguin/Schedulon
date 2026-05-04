@@ -1,6 +1,7 @@
 package metrics
 
 import (
+	"fmt"
 	"net/http"
 	"sync"
 
@@ -83,6 +84,32 @@ var (
 	schedulerActiveWorkers = promauto.NewGauge(prometheus.GaugeOpts{
 		Name: "scheduler_active_workers",
 		Help: "Current number of registered workers",
+	})
+
+	schedulerTaskPriorityDistribution = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "scheduler_task_priority_distribution",
+			Help: "Count of task assignments by priority label",
+		},
+		[]string{"priority"},
+	)
+
+	schedulerTaskRetriesTotal = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "scheduler_task_retries_total",
+		Help: "Total task failure retries requeued with backoff",
+	})
+
+	schedulerSchedulingScore = promauto.NewHistogram(
+		prometheus.HistogramOpts{
+			Name:    "scheduler_scheduling_score",
+			Help:    "Observed scheduling score for chosen worker-task pair",
+			Buckets: prometheus.LinearBuckets(0, 0.2, 11),
+		},
+	)
+
+	schedulerFairnessViolations = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "scheduler_fairness_violations",
+		Help: "Assignments where a worker already ran multiple tasks for the same tenant",
 	})
 
 	workerGPUUtilization = promauto.NewGaugeVec(
@@ -218,6 +245,26 @@ func (sm *SchedulerMetrics) AddWorkersMarkedOffline(n int) {
 
 func (sm *SchedulerMetrics) SetSchedulerActiveWorkers(count int) {
 	schedulerActiveWorkers.Set(float64(count))
+}
+
+func (sm *SchedulerMetrics) RecordTaskPriorityDistribution(priority int32) {
+	schedulerTaskPriorityDistribution.WithLabelValues(fmtInt32(priority)).Inc()
+}
+
+func (sm *SchedulerMetrics) IncrementTaskRetries() {
+	schedulerTaskRetriesTotal.Inc()
+}
+
+func (sm *SchedulerMetrics) ObserveSchedulingScore(score float64) {
+	schedulerSchedulingScore.Observe(score)
+}
+
+func (sm *SchedulerMetrics) IncrementFairnessViolations() {
+	schedulerFairnessViolations.Inc()
+}
+
+func fmtInt32(v int32) string {
+	return fmt.Sprintf("%d", v)
 }
 
 type WorkerMetrics struct {

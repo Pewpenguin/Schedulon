@@ -6,15 +6,20 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/training-scheduler/pkg/logging"
 	"github.com/training-scheduler/pkg/metrics"
 	"github.com/training-scheduler/pkg/persistence"
+	"github.com/training-scheduler/pkg/scheduler/policies"
 	pb "github.com/training-scheduler/proto"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
+
+// taskIDSequence avoids duplicate task IDs when multiple submissions share the same wall-clock tick.
+var taskIDSequence int64
 
 type Scheduler struct {
 	pb.UnimplementedTrainingSchedulerServer
@@ -42,6 +47,9 @@ type Worker struct {
 	RunningTasks   int
 	CPUCount       uint32
 	MemoryMBTotal  uint64
+	GPUMemoryTotal int32
+	GPUMemoryFree  int32
+	GPUModel       string
 }
 
 type GPU struct {
@@ -52,20 +60,27 @@ type GPU struct {
 }
 
 type Task struct {
-	ID             string
-	Name           string
-	RequiredGPUs   uint32
-	MinGPUMemory   uint64
-	Configuration  []byte
-	Status         pb.TaskStatus
-	WorkerID       string
-	AssignedGPUs   []string
-	StartTime      time.Time
-	SubmittedAt    time.Time
-	Progress       float32
-	Metrics        []*pb.Metric
-	LeaseOwner     string
-	LeaseExpiresAt time.Time
+	ID                 string
+	Name               string
+	RequiredGPUs       uint32
+	MinGPUMemory       uint64
+	Configuration      []byte
+	Status             pb.TaskStatus
+	WorkerID           string
+	AssignedGPUs       []string
+	StartTime          time.Time
+	SubmittedAt        time.Time
+	Progress           float32
+	Metrics            []*pb.Metric
+	LeaseOwner         string
+	LeaseExpiresAt     time.Time
+	Priority           int32
+	MaxRetries         int32
+	RetryCount         int32
+	Tenant             string
+	RequiredGPUMemory  int32
+	RequiredGPUModel   string
+	NotBefore          time.Time
 }
 
 func NewScheduler() *Scheduler {
@@ -79,7 +94,7 @@ func NewScheduler() *Scheduler {
 		logger, _ = logging.NewLogger(logging.Config{Level: logging.InfoLevel})
 	}
 
-	return &Scheduler{
+	s := &Scheduler{
 		workers:          make(map[string]*Worker),
 		tasks:            make(map[string]*Task),
 		idempotencyIndex: make(map[string]string),
@@ -88,6 +103,8 @@ func NewScheduler() *Scheduler {
 		workerTimeout:    60 * time.Second,
 		logger:           logger,
 	}
+	s.taskQueue.SetScoring(s.scoreAssignment, s.sameTenantRunningOnWorker)
+	return s
 }
 
 // SetTiming updates lease and worker heartbeat timeouts. Call before serving RPCs.
@@ -162,6 +179,17 @@ func (s *Scheduler) RegisterWorker(ctx context.Context, req *pb.RegisterWorkerRe
 		MemoryMBTotal:  req.GetMemoryMbTotal(),
 	}
 
+	recomputeWorkerGPUAggregates(worker)
+	if req.GetGpuMemoryTotal() > 0 {
+		worker.GPUMemoryTotal = req.GetGpuMemoryTotal()
+	}
+	if req.GetGpuMemoryFree() > 0 {
+		worker.GPUMemoryFree = req.GetGpuMemoryFree()
+	}
+	if m := strings.TrimSpace(req.GetGpuModel()); m != "" {
+		worker.GPUModel = m
+	}
+
 	s.workers[workerID] = worker
 
 	s.logger.InfoCtx(ctx, "Worker registered into worker registry", map[string]interface{}{
@@ -220,6 +248,7 @@ func (s *Scheduler) RequestTask(ctx context.Context, req *pb.TaskRequest) (*pb.T
 			gpu.Available = available
 		}
 	}
+	recomputeWorkerGPUAggregates(worker)
 
 	task := s.taskQueue.Dequeue(worker)
 	if task == nil {
@@ -252,6 +281,12 @@ func (s *Scheduler) RequestTask(ctx context.Context, req *pb.TaskRequest) (*pb.T
 	s.grantLeaseLocked(task, workerID)
 
 	worker.Status = pb.WorkerStatus_BUSY
+	sameTenant := s.sameTenantRunningOnWorker(worker, task.Tenant)
+	if sameTenant >= 2 {
+		s.recordFairnessViolation()
+	}
+	s.recordSchedulingScore(policies.Score(workerViewFrom(worker), taskViewFrom(task), sameTenant))
+
 	worker.Tasks[task.ID] = task
 
 	for _, gpu := range worker.GPUDevices {
@@ -261,14 +296,21 @@ func (s *Scheduler) RequestTask(ctx context.Context, req *pb.TaskRequest) (*pb.T
 			}
 		}
 	}
+	recomputeWorkerGPUAggregates(worker)
 
 	pbTask := &pb.Task{
-		Id:            task.ID,
-		Name:          task.Name,
-		RequiredGpus:  task.RequiredGPUs,
-		MinGpuMemory:  task.MinGPUMemory,
-		Configuration: task.Configuration,
-		Status:        task.Status,
+		Id:                  task.ID,
+		Name:                task.Name,
+		RequiredGpus:        task.RequiredGPUs,
+		MinGpuMemory:        task.MinGPUMemory,
+		Configuration:       task.Configuration,
+		Status:              task.Status,
+		Priority:            task.Priority,
+		MaxRetries:          task.MaxRetries,
+		RetryCount:          task.RetryCount,
+		Tenant:              task.Tenant,
+		RequiredGpuMemory:   task.RequiredGPUMemory,
+		RequiredGpuModel:    task.RequiredGPUModel,
 	}
 
 	var assignSchedLatencySec float64
@@ -286,6 +328,7 @@ func (s *Scheduler) RequestTask(ctx context.Context, req *pb.TaskRequest) (*pb.T
 	s.updateMetrics(metricsSnapshot.activeTasks, metricsSnapshot.pendingTasks, metricsSnapshot.activeWorkers)
 	s.recordWorkerStatusChange()
 	s.recordTaskAssigned(assignSchedLatencySec, assignObserveLatency)
+	s.recordTaskPriority(task.Priority)
 
 	return pbTask, nil
 }
@@ -297,11 +340,15 @@ func selectGPUIDsForTask(worker *Worker, task *Task) []string {
 
 	assigned := make([]string, 0, task.RequiredGPUs)
 	for _, gpu := range worker.GPUDevices {
-		if gpu.Available && gpu.MemoryMB >= task.MinGPUMemory {
-			assigned = append(assigned, gpu.ID)
-			if len(assigned) == int(task.RequiredGPUs) {
-				break
-			}
+		if !gpu.Available || gpu.MemoryMB < task.MinGPUMemory {
+			continue
+		}
+		if task.RequiredGPUModel != "" && gpu.Model != task.RequiredGPUModel {
+			continue
+		}
+		assigned = append(assigned, gpu.ID)
+		if len(assigned) == int(task.RequiredGPUs) {
+			break
 		}
 	}
 
@@ -328,6 +375,12 @@ func (s *Scheduler) SubmitTask(ctx context.Context, req *pb.SubmitTaskRequest) (
 	if req.Priority < 0 {
 		return nil, status.Error(codes.InvalidArgument, "priority must be non-negative")
 	}
+	if req.MaxRetries < 0 {
+		return nil, status.Error(codes.InvalidArgument, "max_retries must be non-negative")
+	}
+	if req.RequiredGpuMemory < 0 {
+		return nil, status.Error(codes.InvalidArgument, "required_gpu_memory must be non-negative")
+	}
 
 	idempotencyKey := strings.TrimSpace(req.IdempotencyKey)
 
@@ -350,7 +403,7 @@ func (s *Scheduler) SubmitTask(ctx context.Context, req *pb.SubmitTaskRequest) (
 		}
 	}
 
-	taskID := fmt.Sprintf("task-%d", time.Now().UnixNano())
+	taskID := fmt.Sprintf("task-%d-%d", time.Now().UnixNano(), atomic.AddInt64(&taskIDSequence, 1))
 
 	configBytes, err := json.Marshal(exec)
 	if err != nil {
@@ -363,13 +416,19 @@ func (s *Scheduler) SubmitTask(ctx context.Context, req *pb.SubmitTaskRequest) (
 
 	now := time.Now()
 	task := &Task{
-		ID:             taskID,
-		Name:           exec.GetImage(),
-		RequiredGPUs:   uint32(req.RequiredGpus),
-		MinGPUMemory:   0,
-		Configuration:  configBytes,
-		Status:         pb.TaskStatus_PENDING,
-		SubmittedAt:    now,
+		ID:                taskID,
+		Name:              exec.GetImage(),
+		RequiredGPUs:      uint32(req.RequiredGpus),
+		MinGPUMemory:      0,
+		Configuration:     configBytes,
+		Status:            pb.TaskStatus_PENDING,
+		SubmittedAt:       now,
+		Priority:          req.Priority,
+		MaxRetries:        req.MaxRetries,
+		RetryCount:        0,
+		Tenant:            strings.TrimSpace(req.Tenant),
+		RequiredGPUMemory: req.RequiredGpuMemory,
+		RequiredGPUModel:  strings.TrimSpace(req.RequiredGpuModel),
 	}
 
 	s.tasks[task.ID] = task
@@ -440,6 +499,58 @@ func (s *Scheduler) ReportTaskStatus(ctx context.Context, update *pb.TaskStatusU
 	if reportingWorkerID != leaseHolder {
 		s.mu.Unlock()
 		return nil, status.Errorf(codes.PermissionDenied, "worker %q is not the lease holder for task %s", reportingWorkerID, taskID)
+	}
+
+	if update.Status == pb.TaskStatus_FAILED && task.RetryCount < task.MaxRetries {
+		if err := ValidateTransition(task.Status.String(), pb.TaskStatus_PENDING.String()); err != nil {
+			s.mu.Unlock()
+			return nil, status.Errorf(codes.FailedPrecondition, "invalid task state transition for retry: %v", err)
+		}
+		task.RetryCount++
+		task.NotBefore = time.Now().Add(RetryDelay(int(task.RetryCount)))
+		for _, gpu := range worker.GPUDevices {
+			for _, id := range task.AssignedGPUs {
+				if gpu.ID == id {
+					gpu.Available = true
+				}
+			}
+		}
+		delete(worker.Tasks, taskID)
+		workerBecameIdleRetry := false
+		if len(worker.Tasks) == 0 {
+			worker.Status = pb.WorkerStatus_IDLE
+			workerBecameIdleRetry = true
+		}
+		recomputeWorkerGPUAggregates(worker)
+		task.Status = pb.TaskStatus_PENDING
+		task.WorkerID = ""
+		task.AssignedGPUs = nil
+		task.LeaseOwner = ""
+		task.LeaseExpiresAt = time.Time{}
+		task.Progress = 0
+		task.Metrics = update.Metrics
+		s.taskQueue.Enqueue(task)
+
+		s.updatePersistentStateLocked()
+		metricsSnapshot := s.metricsSnapshotLocked()
+		s.mu.Unlock()
+		s.updateMetrics(metricsSnapshot.activeTasks, metricsSnapshot.pendingTasks, metricsSnapshot.activeWorkers)
+		if workerBecameIdleRetry {
+			s.recordWorkerStatusChange()
+		}
+		s.recordTaskRetry()
+
+		s.logger.InfoCtx(ctx, "Task requeued after failure (retry)", map[string]interface{}{
+			logging.FieldTaskID:   taskID,
+			logging.FieldWorkerID: reportingWorkerID,
+			"retry_count":         task.RetryCount,
+			"max_retries":         task.MaxRetries,
+		})
+
+		return &pb.TaskStatusResponse{
+			Acknowledged: true,
+			Message:      "failure recorded; task requeued with backoff",
+		}, nil
 	}
 
 	if err := ValidateTransition(task.Status.String(), update.Status.String()); err != nil {
